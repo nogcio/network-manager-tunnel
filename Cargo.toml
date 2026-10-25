@@ -1,0 +1,43 @@
+[workspace]
+members = ["xtask", "crates/profile", "crates/nm-client", "crates/subscription", "crates/engine", "crates/nm-service", "frontends/cosmic"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+nm-tunnel-profile = { path = "crates/profile", version = "=0.1.0" }
+nm-tunnel-client = { path = "crates/nm-client", version = "=0.1.0" }
+nm-tunnel-subscription = { path = "crates/subscription", version = "=0.1.0" }
+nm-tunnel-engine = { path = "crates/engine", version = "=0.1.0" }
+lwip = { package = "meow-lwip", version = "=0.26.1", git = "https://github.com/nogcio/meow-rs", rev = "fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21" }
+meow-common = { version = "=0.26.1", git = "https://github.com/nogcio/meow-rs", rev = "fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21" }
+meow-proxy = { version = "=0.26.1", git = "https://github.com/nogcio/meow-rs", rev = "fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21", default-features = false, features = ["vless", "vless-vision"] }
+meow-transport = { version = "=0.26.1", git = "https://github.com/nogcio/meow-rs", rev = "fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21", default-features = false, features = ["tls", "ws", "reality"] }
+base64 = "0.22"
+percent-encoding = "2.3"
+secrecy = "0.10.3"
+thiserror = "2"
+url = "2.5.8"
+uuid = { version = "1.29", features = ["v4"] }
+zbus = { version = "5.19", default-features = false, features = ["tokio"] }
+tokio = { version = "1", features = ["time", "macros", "rt-multi-thread"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "thin"

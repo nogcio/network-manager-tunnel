@@ -1,0 +1,105 @@
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+# CI and xtask invoke check --warn unmaintained: keep maintenance diagnostics
+# visible without treating abandonment alone as a demonstrated vulnerability.
+
+[licenses]
+version = 2
+confidence-threshold = 0.95
+allow = ["MIT", "Apache-2.0", "MIT-0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib", "Unicode-3.0"]
+# Owner-approved exact-version admissions; rationale and source identities:
+# docs/dependency-review.md. No blanket copyleft/public-domain allowance.
+exceptions = [
+    { crate = "almost@0.2.0", allow = ["CC0-1.0"] },
+    { crate = "apply@0.3.0", allow = ["Unlicense"] },
+    { crate = "clipboard-win@5.4.3", allow = ["BSL-1.0"] },
+    { crate = "cosmic-config@1.0.0", allow = ["MPL-2.0"] },
+    { crate = "cosmic-config-derive@1.0.0", allow = ["MPL-2.0"] },
+    { crate = "cosmic-settings-daemon@0.1.0", allow = ["MPL-2.0"] },
+    { crate = "cosmic-theme@1.0.0", allow = ["MPL-2.0"] },
+    { crate = "error-code@3.4.0", allow = ["BSL-1.0"] },
+    { crate = "hexf-parse@0.2.1", allow = ["CC0-1.0"] },
+    { crate = "libcosmic@1.0.0", allow = ["MPL-2.0"] },
+    { crate = "notify@8.2.1", allow = ["CC0-1.0"] },
+    { crate = "option-ext@0.2.0", allow = ["MPL-2.0"] },
+    { crate = "webpki-root-certs@1.0.11", allow = ["CDLA-Permissive-2.0"] },
+    { crate = "webpki-roots@1.0.11", allow = ["CDLA-Permissive-2.0"] },
+]
+
+# Paths are relative to each resolved package, not to this repository. Parent
+# licenses are read in place from the reviewed checkout; no Cargo cache edits.
+# cargo-deny 0.19 matches name/version and normalized XXH32 file contents, not a
+# Git SHA. Cargo.lock/source pins and source review remain independent requirements.
+[[licenses.clarify]]
+crate = "apply@0.3.0"
+expression = "Unlicense"
+license-files = [{ path = "License.md", hash = 0x401a3405 }]
+
+[[licenses.clarify]]
+crate = "libcosmic@1.0.0"
+expression = "MPL-2.0"
+license-files = [{ path = "LICENSE", hash = 0x3b6981e6 }]
+
+[[licenses.clarify]]
+crate = "cosmic-config@1.0.0"
+expression = "MPL-2.0"
+license-files = [{ path = "../LICENSE", hash = 0x3b6981e6 }]
+
+[[licenses.clarify]]
+crate = "cosmic-config-derive@1.0.0"
+expression = "MPL-2.0"
+license-files = [{ path = "../LICENSE", hash = 0x3b6981e6 }]
+
+[[licenses.clarify]]
+crate = "cosmic-theme@1.0.0"
+expression = "MPL-2.0"
+license-files = [{ path = "../LICENSE", hash = 0x3b6981e6 }]
+
+[[licenses.clarify]]
+crate = "cosmic-settings-daemon@0.1.0"
+expression = "MPL-2.0"
+license-files = [{ path = "../LICENSE.md", hash = 0x0d4a6b51 }]
+
+# Iced is the MIT submodule; do not use libcosmic's MPL parent LICENSE here.
+[[licenses.clarify]]
+crate = "iced_accessibility@0.1.0"
+expression = "MIT"
+license-files = [{ path = "../LICENSE", hash = 0xa244f17c }]
+
+[[licenses.clarify]]
+crate = "dnd@0.1.0"
+expression = "MIT"
+license-files = [{ path = "../LICENSE", hash = 0xfd9601dd }]
+
+[[licenses.clarify]]
+crate = "mime@0.1.0"
+expression = "MIT"
+license-files = [{ path = "../LICENSE", hash = 0xfd9601dd }]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Cargo.lock owns resolved commits; builds and audits use --locked (ADR 0009).
+allow-git = [
+    "https://github.com/iced-rs/cryoglyph",
+    "https://github.com/jackpot51/rust-atomicwrites",
+    "https://github.com/nogcio/meow-rs",
+    "https://github.com/pop-os/cosmic-protocols",
+    "https://github.com/pop-os/dbus-settings-bindings",
+    "https://github.com/pop-os/freedesktop-icons",
+    "https://github.com/pop-os/libcosmic",
+    "https://github.com/pop-os/smithay-clipboard",
+    "https://github.com/pop-os/softbuffer",
+    "https://github.com/pop-os/window_clipboard",
+    "https://github.com/pop-os/winit",
+    "https://github.com/wash2/accesskit",
+]

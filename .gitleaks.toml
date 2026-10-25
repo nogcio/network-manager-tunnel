@@ -1,0 +1,4 @@
+title = "NetworkManager Tunnel: default secret detectors, no exceptions"
+
+[extend]
+useDefault = true

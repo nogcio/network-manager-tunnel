@@ -1,0 +1,27 @@
+Third-party Rust dependency notices
+==================================
+
+Generated for the locked Linux production dependency graph. Supplementary
+native and embedded-asset notices accompany this document separately.
+
+Source identities (registry packages are available at
+https://crates.io/api/v1/crates/NAME/VERSION/download; git identities include
+the exact revision after '#'). See SOURCE-AVAILABILITY.md for MPL sources.
+{{#each crates}}
+  {{package.name}} {{package.version}}: {{{package.source}}}
+{{/each}}
+
+{{#each licenses}}
+{{name}} ({{id}})
+Used by:
+{{#each used_by}}
+  {{crate.name}} {{crate.version}} — {{crate.repository}}
+{{/each}}
+{{#unless source_path}}
+(Canonical license text; no original license text was harvested for this entry.)
+{{/unless}}
+
+{{{text}}}
+
+------------------------------------------------------------------------
+{{/each}}

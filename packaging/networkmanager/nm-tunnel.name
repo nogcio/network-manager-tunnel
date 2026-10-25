@@ -1,0 +1,5 @@
+[VPN Connection]
+name=NetworkManager Tunnel
+service=org.freedesktop.NetworkManager.tunnel
+program=/usr/libexec/nm-tunnel-service
+supports-multiple-connections=false

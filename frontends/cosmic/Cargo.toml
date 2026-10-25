@@ -1,0 +1,25 @@
+[package]
+name = "nm-tunnel-cosmic"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[package.metadata.nm-tunnel]
+layer = "frontend"
+
+[features]
+default = []
+preview = ["dep:image"]
+
+[dependencies]
+nm-tunnel-profile.workspace = true
+nm-tunnel-client.workspace = true
+nm-tunnel-subscription.workspace = true
+secrecy.workspace = true
+image = { version = "=0.25.10", default-features = false, features = ["png"], optional = true }
+libcosmic = { version = "=1.0.0", git = "https://github.com/pop-os/libcosmic", rev = "430f3d48a97d8779f9c1985473912e594ccca1ae", default-features = false, features = ["winit", "wgpu", "tokio", "wayland", "dbus-config", "a11y"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,21 @@
+[package]
+name = "nm-tunnel-profile"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[package.metadata.nm-tunnel]
+layer = "model"
+
+[dependencies]
+base64.workspace = true
+http = "1.5"
+percent-encoding.workspace = true
+secrecy.workspace = true
+thiserror.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

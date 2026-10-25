@@ -1,0 +1,41 @@
+# Optional measurement; deliberately independent of CI required.
+name: Coverage
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: '4'
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  coverage:
+    name: Informational Rust coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Native COSMIC build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y pkg-config libwayland-dev libxkbcommon-dev libfontconfig1-dev
+      - run: rustup component add llvm-tools-preview
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov@0.7.1
+          checksum: true
+          fallback: none
+      - run: cargo llvm-cov --workspace --all-targets --all-features --locked --lcov --output-path target/coverage.lcov
+      - run: test -s target/coverage.lcov
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coverage-lcov
+          path: target/coverage.lcov
+          if-no-files-found: error
+          retention-days: 7

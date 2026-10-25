@@ -1,0 +1,10 @@
+# Owner-requested major action tags. These refs are mutable, not source hashes.
+# Only the listed actions use ref-pin; all other security audits remain enabled.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        actions/checkout: ref-pin
+        actions/upload-artifact: ref-pin
+        taiki-e/install-action: ref-pin
+        jdx/mise-action: ref-pin

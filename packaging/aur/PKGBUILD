@@ -1,0 +1,80 @@
+# Planned upstream/AUR submission; neither is claimed published. See README.md.
+pkgname=network-manager-tunnel-git
+pkgver=r0.g0000000
+pkgrel=1
+pkgdesc='Native COSMIC subscription UI and experimental NetworkManager VPN service'
+arch=('x86_64')
+url='https://github.com/nogcio/network-manager-tunnel'
+# The workspace is MIT OR Apache-2.0; bundled components require both texts
+# and the additional licenses below. Recheck the generated production inventory.
+license=('MIT' 'Apache-2.0' 'BSD-2-Clause' 'BSD-3-Clause' 'ISC'
+         'Zlib' 'Unicode-3.0' 'MPL-2.0' 'Unlicense' 'CC0-1.0'
+         'CDLA-Permissive-2.0' 'OFL-1.1')
+depends=('networkmanager' 'nftables' 'dbus' 'systemd' 'util-linux' 'glibc'
+         'gcc-libs' 'wayland' 'libxkbcommon' 'fontconfig')
+makedepends=('rust' 'git' 'cmake' 'clang' 'pkgconf' 'cargo-about=0.8.4')
+provides=("network-manager-tunnel=${pkgver}")
+conflicts=('network-manager-tunnel')
+# Cargo's release profile owns thin LTO; do not add makepkg's separate LTO policy.
+options=('!lto' '!debug')
+source=('network-manager-tunnel::git+https://github.com/nogcio/network-manager-tunnel.git')
+sha256sums=('SKIP')
+
+pkgver() {
+    cd "$srcdir/network-manager-tunnel"
+    printf 'r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+    cd "$srcdir/network-manager-tunnel"
+    export CARGO_TARGET_DIR="$srcdir/network-manager-tunnel/target"
+    cargo build --locked --release --no-default-features \
+        --target x86_64-unknown-linux-gnu \
+        -p nm-tunnel-cosmic -p nm-tunnel-service
+    cargo about generate --locked --no-default-features --fail \
+        --manifest-path frontends/cosmic/Cargo.toml \
+        packaging/licenses/notices.hbs -o target/cosmic-notices.txt
+    cargo about generate --locked --no-default-features --fail \
+        --manifest-path crates/nm-service/Cargo.toml \
+        packaging/licenses/notices.hbs -o target/service-notices.txt
+}
+
+check() {
+    cd "$srcdir/network-manager-tunnel"
+    cargo test --locked --release --no-default-features \
+        --target x86_64-unknown-linux-gnu --workspace --all-targets
+}
+
+package() {
+    cd "$srcdir/network-manager-tunnel"
+    install -Dm755 target/x86_64-unknown-linux-gnu/release/nm-tunnel-cosmic \
+        "$pkgdir/usr/bin/nm-tunnel-cosmic"
+    install -Dm755 target/x86_64-unknown-linux-gnu/release/nm-tunnel-service \
+        "$pkgdir/usr/libexec/nm-tunnel-service"
+    install -Dm644 frontends/cosmic/resources/io.github.nm_tunnel.Cosmic.desktop \
+        "$pkgdir/usr/share/applications/io.github.nm_tunnel.Cosmic.desktop"
+    install -Dm644 frontends/cosmic/resources/icons/io.github.nm_tunnel.Cosmic.svg \
+        "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.nm_tunnel.Cosmic.svg"
+    install -Dm644 frontends/cosmic/resources/icons/io.github.nm_tunnel.Cosmic-symbolic.svg \
+        "$pkgdir/usr/share/icons/hicolor/symbolic/apps/io.github.nm_tunnel.Cosmic-symbolic.svg"
+    install -Dm644 packaging/networkmanager/nm-tunnel.name \
+        "$pkgdir/usr/lib/NetworkManager/VPN/nm-tunnel.name"
+    install -Dm644 packaging/dbus/org.freedesktop.NetworkManager.tunnel.service \
+        "$pkgdir/usr/share/dbus-1/system-services/org.freedesktop.NetworkManager.tunnel.service"
+    install -Dm644 packaging/dbus/org.freedesktop.NetworkManager.tunnel.conf \
+        "$pkgdir/usr/share/dbus-1/system.d/org.freedesktop.NetworkManager.tunnel.conf"
+    install -Dm644 packaging/sysusers/nm-tunnel.conf \
+        "$pkgdir/usr/lib/sysusers.d/nm-tunnel.conf"
+    install -Dm644 LICENSE-MIT LICENSE-APACHE -t \
+        "$pkgdir/usr/share/licenses/network-manager-tunnel"
+    install -Dm644 packaging/licenses/{Open-Sans-OFL,Noto-OFL,lwIP-COPYING}.txt -t \
+        "$pkgdir/usr/share/licenses/network-manager-tunnel"
+    install -Dm644 packaging/licenses/README.md \
+        "$pkgdir/usr/share/licenses/network-manager-tunnel/supplementary-notices.md"
+    install -Dm644 target/{cosmic,service}-notices.txt -t \
+        "$pkgdir/usr/share/licenses/network-manager-tunnel"
+    install -Dm644 packaging/licenses/SOURCE-AVAILABILITY.md -t \
+        "$pkgdir/usr/share/licenses/network-manager-tunnel"
+    install -Dm644 docs/{installation,user-guide,dependency-review}.md -t \
+        "$pkgdir/usr/share/doc/network-manager-tunnel"
+}

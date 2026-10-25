@@ -1,0 +1,24 @@
+[package]
+name = "nm-tunnel-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[package.metadata.nm-tunnel]
+layer = "engine"
+
+[dependencies]
+nm-tunnel-profile.workspace = true
+meow-common.workspace = true
+meow-proxy.workspace = true
+meow-transport.workspace = true
+async-trait = "0.1"
+base64.workspace = true
+secrecy.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net", "io-util"] }
+uuid.workspace = true
+
+[lints]
+workspace = true

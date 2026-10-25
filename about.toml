@@ -1,0 +1,161 @@
+# cargo-about 0.8.4 (Arch's packaged version) collects AUR production notices.
+# This is notice collection, not dependency admission (deny.toml).
+accepted = ["MIT", "Apache-2.0", "MIT-0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib", "Unicode-3.0", "MPL-2.0", "Unlicense", "CC0-1.0", "BSL-1.0", "CDLA-Permissive-2.0", "OFL-1.1"]
+ignore-dev-dependencies = true
+ignore-build-dependencies = true
+targets = ["x86_64-unknown-linux-gnu"]
+# Collect from resolved sources, not an external license-metadata service.
+no-clearly-defined = true
+
+[apply.clarify]
+license = "Unlicense"
+files = [{ path = "License.md", checksum = "79d0fc44716007dddc375601bca8879ad45bc1165bf9342b7a16572b4f41abe8" }]
+
+[libcosmic.clarify]
+license = "MPL-2.0"
+files = [{ path = "LICENSE", checksum = "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5" }]
+
+[cosmic-config.clarify]
+license = "MPL-2.0"
+files = [{ path = "../LICENSE", checksum = "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5" }]
+
+[cosmic-config-derive.clarify]
+license = "MPL-2.0"
+files = [{ path = "../LICENSE", checksum = "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5" }]
+
+[cosmic-theme.clarify]
+license = "MPL-2.0"
+files = [{ path = "../LICENSE", checksum = "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5" }]
+
+[cosmic-settings-daemon.clarify]
+license = "MPL-2.0"
+files = [{ path = "../LICENSE.md", checksum = "e368885fd6ab4d78863ed9a0daac8a16b40a55c58395a9061f7c36b52a30536d" }]
+
+# Iced's own MIT license, not the parent toolkit's MPL license.
+[iced_accessibility.clarify]
+license = "MIT"
+files = [{ path = "../LICENSE", checksum = "fc9086ba4eba4b77e4c603906362742bc3715ffa2c7810c6074fe7780d3a0398" }]
+
+[dnd.clarify]
+license = "MIT"
+files = [{ path = "../LICENSE", checksum = "7faec985f3e9b1c4a1df646bfedc304ba67e409447f7ab7f4f591f68708d85dc" }]
+
+[mime.clarify]
+license = "MIT"
+files = [{ path = "../LICENSE", checksum = "7faec985f3e9b1c4a1df646bfedc304ba67e409447f7ab7f4f591f68708d85dc" }]
+
+# Native BoringSSL is Apache-2.0, independently of the Rust FFI wrapper's MIT.
+[boring-sys.clarify]
+license = "MIT AND Apache-2.0"
+files = [
+    { path = "LICENSE-MIT", license = "MIT", checksum = "ad2e7bdef7c00b92eaf4f657a472c7d3f8b36aac3cdc270e65bb0c287eec0d4e" },
+    { path = "deps/boringssl/LICENSE", license = "Apache-2.0", checksum = "827c8d8fc207c2392794eef9e00fe246f9f61fdcc132556c275be3dd8c3cd97f" },
+]
+
+[boring.clarify]
+license = "Apache-2.0"
+files = [{ path = "LICENSE", checksum = "48e488ce333f8a1e86a68b2a1df454464037f1ff580b5bff926053c56dbadc2d" }]
+
+# These workspace crates inherit the repository's MIT copyright text.
+[meow-common.clarify]
+license = "MIT"
+files = [{ path = "../../LICENSE", checksum = "b7a39018faacfd98597da373045fbacf2c3f134fd755e553894a6a9adad38db5" }]
+
+[meow-dns.clarify]
+license = "MIT"
+files = [{ path = "../../LICENSE", checksum = "b7a39018faacfd98597da373045fbacf2c3f134fd755e553894a6a9adad38db5" }]
+
+[meow-lwip.clarify]
+license = "MIT"
+files = [{ path = "../../LICENSE", checksum = "b7a39018faacfd98597da373045fbacf2c3f134fd755e553894a6a9adad38db5" }]
+
+[meow-proxy.clarify]
+license = "MIT"
+files = [{ path = "../../LICENSE", checksum = "b7a39018faacfd98597da373045fbacf2c3f134fd755e553894a6a9adad38db5" }]
+
+[meow-transport.clarify]
+license = "MIT"
+files = [{ path = "../../LICENSE", checksum = "b7a39018faacfd98597da373045fbacf2c3f134fd755e553894a6a9adad38db5" }]
+
+[meow-trie.clarify]
+license = "MIT"
+files = [{ path = "../../LICENSE", checksum = "b7a39018faacfd98597da373045fbacf2c3f134fd755e553894a6a9adad38db5" }]
+
+[cosmic-client-toolkit.clarify]
+license = "MIT"
+files = [{ path = "../src/LICENSE", checksum = "89807acf2309bd285f033404ee78581602f3cd9b819a16ac2f0e5f60ff4a473e" }]
+
+[iced_core.clarify]
+license = "MIT"
+files = [{ path = "../LICENSE", checksum = "fc9086ba4eba4b77e4c603906362742bc3715ffa2c7810c6074fe7780d3a0398" }]
+
+[iced_debug.clarify]
+license = "MIT"
+files = [{ path = "../LICENSE", checksum = "fc9086ba4eba4b77e4c603906362742bc3715ffa2c7810c6074fe7780d3a0398" }]
+
+[iced_futures.clarify]
+license = "MIT"
+files = [{ path = "../LICENSE", checksum = "fc9086ba4eba4b77e4c603906362742bc3715ffa2c7810c6074fe7780d3a0398" }]
+
+[iced_graphics.clarify]
+license = "MIT"
+files = [{ path = "../LICENSE", checksum = "fc9086ba4eba4b77e4c603906362742bc3715ffa2c7810c6074fe7780d3a0398" }]
+
+[iced_program.clarify]
+license = "MIT"
+files = [{ path = "../LICENSE", checksum = "fc9086ba4eba4b77e4c603906362742bc3715ffa2c7810c6074fe7780d3a0398" }]
+
+[iced_renderer.clarify]
+license = "MIT"
+files = [{ path = "../LICENSE", checksum = "fc9086ba4eba4b77e4c603906362742bc3715ffa2c7810c6074fe7780d3a0398" }]
+
+[iced_runtime.clarify]
+license = "MIT"
+files = [{ path = "../LICENSE", checksum = "fc9086ba4eba4b77e4c603906362742bc3715ffa2c7810c6074fe7780d3a0398" }]
+
+[iced_tiny_skia.clarify]
+license = "MIT"
+files = [{ path = "../LICENSE", checksum = "fc9086ba4eba4b77e4c603906362742bc3715ffa2c7810c6074fe7780d3a0398" }]
+
+[iced_wgpu.clarify]
+license = "MIT"
+files = [{ path = "../LICENSE", checksum = "fc9086ba4eba4b77e4c603906362742bc3715ffa2c7810c6074fe7780d3a0398" }]
+
+[iced_widget.clarify]
+license = "MIT"
+files = [{ path = "../LICENSE", checksum = "fc9086ba4eba4b77e4c603906362742bc3715ffa2c7810c6074fe7780d3a0398" }]
+
+[iced_winit.clarify]
+license = "MIT"
+files = [{ path = "../LICENSE", checksum = "fc9086ba4eba4b77e4c603906362742bc3715ffa2c7810c6074fe7780d3a0398" }]
+
+# The Chromium notice is additional to AccessKit's Rust license choice.
+[accesskit.clarify]
+license = "MIT AND BSD-3-Clause"
+files = [
+    { path = "../LICENSE-MIT", license = "MIT", checksum = "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3" },
+    { path = "../LICENSE.chromium", license = "BSD-3-Clause", checksum = "845022e0c1db1abb41a6ba4cd3c4b674ec290f3359d9d3c78ae558d4c0ed9308" },
+]
+
+[accesskit_consumer.clarify]
+license = "MIT"
+files = [{ path = "../LICENSE-MIT", checksum = "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3" }]
+
+[accesskit_atspi_common.clarify]
+license = "MIT"
+files = [{ path = "../../LICENSE-MIT", checksum = "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3" }]
+
+[accesskit_unix.clarify]
+license = "MIT"
+files = [{ path = "../../LICENSE-MIT", checksum = "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3" }]
+
+[accesskit_winit.clarify]
+license = "MIT"
+files = [{ path = "../../LICENSE-MIT", checksum = "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3" }]
+
+[dpi.clarify]
+license = "Apache-2.0 AND MIT"
+files = [
+    { path = "../LICENSE", license = "Apache-2.0", checksum = "6dc0e068dcf3a5bc8e054205b85b7720e1d49265bbc64bf515d2cf79197df69a" },
+    { path = "LICENSE-LIBM-MIT", license = "MIT", checksum = "9eff396a99bafd208e7126602420d6864f6066c08b84485a5b032320a9c01997" },
+]

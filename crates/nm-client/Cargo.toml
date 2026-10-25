@@ -1,0 +1,25 @@
+[package]
+name = "nm-tunnel-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[package.metadata.nm-tunnel]
+layer = "client"
+
+[dependencies]
+nm-tunnel-profile.workspace = true
+secrecy.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+zbus.workspace = true
+serde = { version = "1", features = ["derive"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+nm-tunnel-subscription.workspace = true
+tokio = { workspace = true, features = ["process", "io-util", "net"] }
