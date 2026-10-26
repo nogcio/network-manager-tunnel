@@ -10,12 +10,14 @@ const ACTIVE: &str = "/org/freedesktop/NetworkManager/ActiveConnection/1";
 struct State {
     settings: Settings,
     flags: Vec<u32>,
+    save_requests: Vec<u32>,
     activations: usize,
     deactivations: usize,
     active: bool,
     unreadable: bool,
     hidden: bool,
     reply_lost: bool,
+    reject_save: bool,
     release_on_read: bool,
 }
 type Shared = Arc<Mutex<State>>;
@@ -51,6 +53,12 @@ impl FakeSettings {
         _args: HashMap<String, OwnedValue>,
     ) -> zbus::fdo::Result<(OwnedObjectPath, HashMap<String, OwnedValue>)> {
         let mut state = lock(&self.0)?;
+        state.save_requests.push(flags);
+        if state.reject_save {
+            return Err(zbus::fdo::Error::AccessDenied(
+                "Synthetic persistent save refusal".into(),
+            ));
+        }
         state.settings = settings;
         state.flags.push(flags);
         if state.reply_lost {
@@ -230,10 +238,27 @@ async fn explicit_storage_control_and_owner_replacement_preserve_boundaries()
         }
         .validate()
         .map_err(|_| "Invalid fixture")?;
-        let saved = bus.save(&profile, Storage::Session).await?;
-        assert!(!saved.persistent());
-        assert_eq!(lock(&state)?.flags, [2]);
-        assert!(bus.snapshot().await?.active.is_empty());
+        // A rejected persistent save must not create a session profile or activate.
+        lock(&state)?.reject_save = true;
+        assert!(matches!(
+            bus.save(&profile).await,
+            Err(ClientError::Rejected)
+        ));
+        assert!(lock(&state)?.settings.is_empty());
+        assert!(lock(&state)?.flags.is_empty());
+        assert_eq!(lock(&state)?.save_requests, [1], "no in-memory fallback");
+        assert_eq!(lock(&state)?.activations, 0);
+        lock(&state)?.reject_save = false;
+        let saved = bus.save(&profile).await?;
+        assert!(saved.persistent());
+        assert_eq!(lock(&state)?.flags, [1]);
+        let initial = bus.snapshot().await?;
+        assert!(initial.profiles[0].persistent());
+        assert!(initial.active.is_empty());
+        assert_eq!(lock(&state)?.activations, 0);
+        assert!(!bool::try_from(
+            &lock(&state)?.settings["connection"]["autoconnect"]
+        )?);
         bus.activate(&saved).await?;
         let snapshot = bus.snapshot().await?;
         assert_eq!(snapshot.active.len(), 1);
@@ -249,9 +274,9 @@ async fn explicit_storage_control_and_owner_replacement_preserve_boundaries()
         lock(&state)?.hidden = false;
         bus.deactivate(&snapshot.active[0]).await?;
         assert_eq!(lock(&state)?.deactivations, 1);
-        let stored = bus.save(&profile, Storage::Persistent).await?;
+        let stored = bus.save(&profile).await?;
         assert!(stored.persistent());
-        assert_eq!(lock(&state)?.flags, [2, 1]);
+        assert_eq!(lock(&state)?.flags, [1, 1]);
         assert!(
             lock(&state)?
                 .settings
@@ -297,12 +322,12 @@ async fn explicit_storage_control_and_owner_replacement_preserve_boundaries()
         lock(&state)?.unreadable = false;
         lock(&state)?.reply_lost = true;
         assert!(matches!(
-            bus.save(&profile, Storage::Session).await,
+            bus.save(&profile).await,
             Err(ClientError::Timeout)
         ));
         assert_eq!(
             lock(&state)?.flags,
-            [2, 1, 2],
+            [1, 1, 1],
             "an indeterminate completed save must not be retried"
         );
         server.release_name(NM).await?;
@@ -312,12 +337,9 @@ async fn explicit_storage_control_and_owner_replacement_preserve_boundaries()
         replacement.request_name(NM).await?;
         // The old unique owner is still connected and serves the same objects.
         // It must no longer receive saves or return apparently current snapshots.
-        assert!(matches!(
-            bus.save(&profile, Storage::Session).await,
-            Err(ClientError::Stale)
-        ));
+        assert!(matches!(bus.save(&profile).await, Err(ClientError::Stale)));
         assert!(matches!(bus.snapshot().await, Err(ClientError::Stale)));
-        assert_eq!(lock(&state)?.flags, [2, 1, 2]);
+        assert_eq!(lock(&state)?.flags, [1, 1, 1]);
         let fresh = Bus::on(client).await?;
         assert!(matches!(
             fresh.activate(&stored).await,
@@ -350,7 +372,7 @@ async fn repeated_names_paths_and_uuids_on_another_bus_do_not_revalidate_handles
         )?
         .validate()
         .map_err(|_| "Invalid fixture")?;
-        let old_profile = first.save(&profile, Storage::Persistent).await?;
+        let old_profile = first.save(&profile).await?;
         first.activate(&old_profile).await?;
         let old_active = first.snapshot().await?.active.remove(0);
 

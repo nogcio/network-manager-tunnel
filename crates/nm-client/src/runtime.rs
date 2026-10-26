@@ -23,18 +23,6 @@ fn request_error(error: zbus::Error, saving: bool) -> ClientError {
     }
 }
 
-/// Explicit storage consent. Both modes disable autoconnect. Persistent mode
-/// stores credentials using NM system storage and may require a Polkit prompt;
-/// it never claims a desktop secret agent owns them.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Storage {
-    /// Memory-only NM profile, lost when NM restarts.
-    #[default]
-    Session,
-    /// NM saves profile and system-owned credentials to its backing storage.
-    Persistent,
-}
-
 /// Non-secret profile identity obtained from NM, not an app-side profile database.
 /// Invalid after bus restart or NM owner replacement; no arbitrary-path constructor exists.
 #[derive(Clone, PartialEq, Eq)]
@@ -235,7 +223,7 @@ impl Bus {
         }
         Ok(())
     }
-    async fn save(&self, profile: &Profile, storage: Storage) -> Result<SavedProfile, ClientError> {
+    async fn save(&self, profile: &Profile) -> Result<SavedProfile, ClientError> {
         let proxy = self
             .proxy(
                 "/org/freedesktop/NetworkManager/Settings",
@@ -243,10 +231,9 @@ impl Bus {
             )
             .await?;
         let settings = encode_profile(profile);
-        let flags = match storage {
-            Storage::Session => 2_u32,
-            Storage::Persistent => 1_u32,
-        };
+        // NM_SETTINGS_ADD_CONNECTION2_FLAG_TO_DISK. Never fall back to memory
+        // if authorization or persistent storage fails.
+        let flags = 1_u32;
         let args: HashMap<String, OwnedValue> = HashMap::new();
         // Ownership can still change between this check and dispatch. Addressing
         // the unique owner prevents redirecting the write to its replacement.
@@ -275,7 +262,7 @@ impl Bus {
             path,
             uuid,
             name: profile.fields().name.clone(),
-            persistent: storage == Storage::Persistent,
+            persistent: true,
         })
     }
     async fn snapshot(&self) -> Result<Snapshot, ClientError> {
@@ -434,17 +421,16 @@ impl Bus {
     }
 }
 
-/// Explicit save. Session is the default; Persistent requires visible user consent
-/// to NM system-stored credentials. Timeout is indeterminate: never auto-retry.
-pub async fn save_profile_with_storage(
-    profile: Profile,
-    storage: Storage,
-) -> Result<SavedProfile, ClientError> {
-    tokio::time::timeout(TIMEOUT, async {
-        Bus::system().await?.save(&profile, storage).await
-    })
-    .await
-    .map_err(|_| ClientError::Timeout)?
+/// Create a persistent NM profile with autoconnect disabled, only on explicit action.
+/// Callers must explain that NM saves credentials in its system storage, not a
+/// desktop keyring. NM owns authorization, file permissions and secret storage;
+/// credentials stay in `vpn.secrets`. Never save automatically on startup/import.
+/// Rejection never falls back to memory. Cancellation/timeout can leave a completed
+/// remote save: the outcome is indeterminate and must never be retried automatically.
+pub async fn save_profile(profile: Profile) -> Result<SavedProfile, ClientError> {
+    tokio::time::timeout(TIMEOUT, async { Bus::system().await?.save(&profile).await })
+        .await
+        .map_err(|_| ClientError::Timeout)?
 }
 /// Read profile/active metadata, not credentials; never activates a service/profile.
 /// Races/removal return an error, not a fabricated disconnected state.

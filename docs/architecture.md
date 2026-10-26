@@ -90,8 +90,8 @@ over verified TLS without Vision. WebSocket path/query, HTTP Host and SNI remain
 distinct validated fields and survive conversion to NM settings.
 The COSMIC UI loads a single HTTPS URI-list subscription into memory and selects
 nodes; it exposes no manual protocol fields. The NM client implements experimental
-schema v1 with session-only storage by default and explicit opt-in NM persistent
-storage, including system-stored credentials. It reads saved/active metadata without
+schema v1 with persistent NM storage on explicit Add, including system-stored
+credentials disclosed before adding. It reads saved/active metadata without
 secret lookup and uses standard NM control APIs. See its
 [contract](../crates/nm-client/README.md). There is no stable API,
 schema migration, existing-profile editing or desktop secret-agent implementation yet.

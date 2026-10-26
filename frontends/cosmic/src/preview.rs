@@ -23,7 +23,6 @@ pub(super) const STATES: &[&str] = &[
     "loading",
     "error",
     "search",
-    "remember",
     "traffic",
     "details",
     "saved",
@@ -130,7 +129,6 @@ impl Preview {
             "profiles"
                 | "long"
                 | "search"
-                | "remember"
                 | "import-no-matches"
                 | "import-added"
                 | "import-saving"
@@ -169,9 +167,6 @@ impl Preview {
         }
         if self.state == "search" {
             app.profile_search = "Germany".into();
-        }
-        if self.state == "remember" {
-            app.remember = true;
         }
         if self.state == "loading" {
             app.source = secrecy::SecretString::from(
@@ -297,7 +292,7 @@ impl Preview {
         self.state.starts_with("import-")
             || matches!(
                 self.state.as_str(),
-                "profiles" | "long" | "loading" | "error" | "search" | "remember"
+                "profiles" | "long" | "loading" | "error" | "search"
             )
     }
 

@@ -37,6 +37,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !std::path::Path::new("/run/nmt-lab-authorized").is_file() {
         return Err("This command is restricted to the explicitly authorized lab VM.".into());
     }
+    println!(
+        "This import saves profiles and credentials on disk in NetworkManager, not a desktop keyring. Autoconnect is off; the subscription URL is never saved."
+    );
     let source = read_source(std::io::stdin(), Duration::from_secs(20))?;
     tokio::runtime::Runtime::new()?.block_on(import(source))
 }
@@ -55,7 +58,9 @@ async fn import(source: String) -> Result<(), Box<dyn std::error::Error>> {
         nm_tunnel_client::save_profile(profile).await?;
         imported += 1;
     }
-    println!("Prepared {imported} session-only NM profile(s), without activation.");
+    println!(
+        "Saved {imported} persistent NM profile(s), including credentials, without activation."
+    );
     if imported == 0 {
         return Err("No supported profiles were imported.".into());
     }

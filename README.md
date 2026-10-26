@@ -20,8 +20,8 @@ This is an independent project, not an official NetworkManager or COSMIC compone
 - Connect and disconnect saved profiles without loading the subscription again.
   Connections are explicit; importing never connects and autoconnect is off.
 - View upload/download rates, totals, a 60-second traffic graph and backend diagnostics.
-- Use session-only profile storage by default, or explicitly allow NetworkManager
-  to save profiles and credentials to disk.
+- Save profiles and credentials to disk in NetworkManager so they survive restart,
+  with autoconnect off.
 
 The backend uses Rust protocol libraries, not an external sing-box or Xray process.
 The supported configuration model covers VLESS over TCP with TLS or REALITY,

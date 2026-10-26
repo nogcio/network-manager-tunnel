@@ -1,6 +1,6 @@
 //! Subscription-only COSMIC UI using the toolkit's native settings/list controls.
 use cosmic::{ApplicationExt, Core, Element, app::Task, executor};
-use nm_tunnel_client::{ClientError, SavedProfile, Snapshot, Storage};
+use nm_tunnel_client::{ClientError, SavedProfile, Snapshot};
 use nm_tunnel_subscription::{Subscription, SubscriptionError, fetch_subscription, validate_url};
 use secrecy::{ExposeSecret, SecretString};
 use std::collections::{BTreeMap, HashSet};
@@ -79,7 +79,6 @@ pub(crate) struct App {
     snapshot: Option<Snapshot>,
     nm_error: Option<ClientError>,
     saved_selected: Option<SavedProfile>,
-    remember: bool,
     monitor_pending: bool,
     epoch: u64,
     control: Option<connection::Intent>,
@@ -141,7 +140,6 @@ pub(crate) enum Message {
     DismissNotice,
     Prepare,
     Prepared(Result<SavedProfile, ClientError>),
-    Remember(bool),
     Poll,
     Observed(u64, Result<Snapshot, ClientError>),
     SavedSelected(String),
@@ -192,7 +190,6 @@ impl cosmic::Application for App {
             snapshot: None,
             nm_error: None,
             saved_selected: None,
-            remember: false,
             monitor_pending: false,
             epoch: 0,
             control: None,
@@ -318,9 +315,6 @@ impl cosmic::Application for App {
             }
             #[cfg(all(feature = "preview", debug_assertions))]
             Message::Frame(_) | Message::Captured(_) => {}
-            Message::Remember(value) => {
-                self.remember = value;
-            }
             Message::Poll
             | Message::Observed(_, _)
             | Message::SavedSelected(_)
@@ -409,15 +403,8 @@ impl cosmic::Application for App {
                     self.busy = true;
                     self.epoch = self.epoch.wrapping_add(1);
                     self.status = "Adding the selected profile to NetworkManager…".into();
-                    let storage = if self.remember {
-                        Storage::Persistent
-                    } else {
-                        Storage::Session
-                    };
                     return cosmic::task::future(async move {
-                        Message::Prepared(
-                            nm_tunnel_client::save_profile_with_storage(profile, storage).await,
-                        )
+                        Message::Prepared(nm_tunnel_client::save_profile(profile).await)
                     });
                 }
             }
@@ -429,11 +416,7 @@ impl cosmic::Application for App {
                         if let Some(index) = self.selected {
                             self.added.insert(index, saved.id().to_owned());
                         }
-                        self.status = if saved.persistent() {
-                            "Saved in NetworkManager, including system-stored credentials. Autoconnect is off; no connection was started."
-                        } else {
-                            "Added to NetworkManager for this session. Autoconnect is off; no connection was started."
-                        }.into();
+                        self.status = "Saved in NetworkManager, including system-stored credentials. Autoconnect is off; no connection was started.".into();
                         self.saved_selected = Some(saved);
                     }
                     Err(error) => {

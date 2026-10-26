@@ -143,9 +143,6 @@ fn loading_selects_only_supported_entries_without_nm_writes()
 #[test]
 fn connection_control_requires_observed_backend_and_profile_and_never_claims_readiness() {
     let (mut app, _) = App::init(Core::default(), Flags::default());
-    assert!(!app.remember, "persistence needs explicit consent");
-    let _ = app.update(Message::Remember(true));
-    assert!(app.remember);
     let _ = app.update(Message::Connect);
     let _ = app.update(Message::Disconnect);
     assert!(!app.busy);

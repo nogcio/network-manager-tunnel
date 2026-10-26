@@ -78,11 +78,10 @@ impl App {
             return content.into();
         };
         content = content.push(
-            widget::settings::section().add(
-                widget::settings::item::builder("Remember added profiles")
-                    .description("Save profiles and credentials on disk in NetworkManager.")
-                    .toggler_maybe(self.remember, (!self.busy).then_some(Message::Remember)),
-            ),
+            widget::text::body(
+                "Add profile saves the profile and credentials on disk in NetworkManager, not a desktop keyring. Profiles remain after restart. Autoconnect is off. The subscription URL is never saved.",
+            )
+            .width(Length::Fill),
         );
         let supported = list.supported_count();
         let counts = format!(

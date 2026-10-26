@@ -53,9 +53,9 @@ sidebar for the single in-memory source.
 1. Paste an HTTPS source into the masked field and press **Load subscription**.
    With a retained list, the action is **Reload subscription**.
 2. Review/search nodes. Unsupported entries have an explanation, not an Add action.
-3. Optionally enable **Remember added profiles**. Off means session-only NM storage;
-   on permits NM persistent storage including credentials on disk, not a desktop
-   keyring. Consent applies to subsequent additions, not existing profiles.
+3. Review the storage notice: **Add profile** always saves profiles and credentials
+   on disk in NM system storage, not a desktop keyring. NM owns file permissions and
+   authorization; a rejected disk save never falls back to temporary storage.
 4. Press **Add profile** on a particular row. Autoconnect stays off; adding never
    connects. Return to Connections to explicitly connect the observed NM profile.
 

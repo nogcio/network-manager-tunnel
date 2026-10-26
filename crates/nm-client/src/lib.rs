@@ -3,12 +3,11 @@ mod runtime;
 mod settings;
 mod telemetry;
 pub use runtime::{
-    ActiveConnection, ConnectionState, SavedProfile, Snapshot, Storage, activate, deactivate,
-    save_profile_with_storage, snapshot,
+    ActiveConnection, ConnectionState, SavedProfile, Snapshot, activate, deactivate, save_profile,
+    snapshot,
 };
 pub use telemetry::{TrafficCounters, TrafficSample, UsageError, UsageSnapshot, usage_snapshot};
 
-use nm_tunnel_profile::Profile;
 use settings::encode_profile;
 use std::time::Duration;
 
@@ -41,13 +40,4 @@ pub enum ClientError {
         "NetworkManager did not confirm the connection request. Refresh its state; do not retry automatically."
     )]
     ControlTimeout,
-}
-
-/// Create a new NM profile only on explicit user action, with autoconnect disabled.
-/// Storage is session-only/in-memory, never persistent system storage.
-/// Never call automatically on startup/import, and do not retry ambiguous timeouts.
-pub async fn save_profile(profile: Profile) -> Result<(), ClientError> {
-    save_profile_with_storage(profile, Storage::Session)
-        .await
-        .map(|_| ())
 }

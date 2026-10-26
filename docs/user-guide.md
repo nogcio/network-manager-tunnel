@@ -15,14 +15,15 @@ the current source UI; an older installed package may have different controls.
    The URL and downloaded list stay in memory. Unsupported entries remain visible
    with a safe explanation. Loading performs the requested HTTPS fetch but does not
    save or activate a profile or change routes/DNS.
-3. Review or search the supported nodes. Storage defaults to **session only**, lost
-   when NM restarts. To request persistence, enable **Remember added profiles**.
-   This applies to the next added profile and also permits its credentials on disk in NM
-   system storage, not a desktop keyring. The subscription URL is never saved.
+3. Review or search the supported nodes. **Add profile** always saves the profile
+   and credentials on disk in NM system storage so they survive restart. The import
+   page explains this before adding. This is not a desktop keyring or encrypted
+   credential vault; NM controls file access and authorization. The subscription
+   URL is never saved.
 4. Press **Add profile** on the desired node's row. NM may require standard desktop
    authorization. This
-   saves a new profile with autoconnect off; it does not activate it. Changing
-   Remember later does not migrate an already saved profile.
+   saves a new profile with autoconnect off; it does not activate it. If disk storage
+   is refused, adding fails instead of silently creating a temporary profile.
 5. Return to Connections using Back and press **Connect** on the saved profile's
    row under **Profiles**. An accepted request is not a successful VPN. Wait for the
    status read from NM to become **Connected**. A missing registered backend
@@ -55,6 +56,11 @@ startup activation, subscription refresh or reconnection loop in the GUI.
 Existing-profile editing, deletion and secret-agent ownership are not implemented.
 Use standard NM tools to manage saved profiles when necessary. Revoking a
 subscription URL does not delete the profiles already saved in NM.
+Old session-only profiles are not migrated automatically; re-add them explicitly
+to save them permanently. Profiles already lost on restart must be imported again.
+
+The network status applet controls its own VPN symbol (often a key). This is not
+the application's desktop icon; recreating profiles does not change that symbol.
 
 ## Errors and retained network protection
 

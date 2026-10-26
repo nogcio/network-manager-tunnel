@@ -18,13 +18,15 @@ condition for using NM profiles. The backend and dependency graph remain experim
 - Keep NM as the only persistent profile store. Display this service's schema-v1
   VLESS profiles separately from the in-memory subscription list. Select saved
   profiles by NM UUID, never by a mutable list position or authentication UUID.
-- Keep session-only save as the default. An explicit unchecked-by-default option
-  permits the next Add action to request NM persistent storage, including credentials
-  on disk in NM system storage. Explain that this is not desktop-keyring storage.
+- Always save persistently on explicit Add, with a visible explanation that NM
+  stores profiles and credentials on disk, not in a desktop keyring. This revises
+  the initial session-only default and optional persistence decision (2026-10-26):
+  profiles should remain usable after restart without a separate storage toggle.
   Do not persist the subscription URL or maintain an app-side profile database.
-- Use AddConnection2 flags IN_MEMORY or TO_DISK respectively, with autoconnect off
-  in both cases and credentials only in `vpn.secrets`. Request standard interactive
-  NM/Polkit authorization only for explicit save/control operations. No new policy
+- Use AddConnection2 TO_DISK only, with autoconnect off and credentials only in
+  `vpn.secrets`. Never fall back to IN_MEMORY on failure or automatically migrate
+  existing temporary profiles. NM owns backing-file permissions. Request standard
+  interactive NM/Polkit authorization only for explicit save/control operations. No new policy
   permission, privileged GUI or custom secret store is introduced.
 - Enable Connect only for an observed saved profile and registered backend with
   no observed active connection for this service. Registration is not readiness.
@@ -51,11 +53,11 @@ condition for using NM profiles. The backend and dependency graph remain experim
 
 Private-bus tests cover storage flags, absent secret lookup, request-vs-state,
 identity/owner replacement, indeterminate saves and read races. UI state tests
-cover guarded control, stale observations, explicit persistence consent and failure
+cover guarded control, stale observations, explicit additions and failure
 feedback without optimistic Connected state or automatic retries.
 
 The [service guide](../../crates/nm-service/README.md#build-packaging-and-acceptance)
-owns the synthetic VM client probe for both storage modes, activation/TUN echo,
+owns the synthetic VM client probe for persistent storage, activation/TUN echo,
 client-independent lifetime, unprivileged observation and persistent-file permissions.
 These checks do not prove reboot behavior, desktop Polkit prompts, native widget
 input or accessibility. Current per-row controls and telemetry observation are

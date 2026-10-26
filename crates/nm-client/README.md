@@ -18,10 +18,13 @@ WebSocket additionally stores `websocket-path` and, when explicitly supplied,
 for TLS SNI. The experimental service consumes this schema; its synthetic VM
 evidence is separate from serialization tests in this package.
 `uuid-flags=0` delegates storage to NM without claiming desktop agent ownership;
-`save_profile` remains session-only (AddConnection2 IN_MEMORY, flag 2).
-`save_profile_with_storage` additionally supports explicit Persistent storage
-(TO_DISK, flag 1), including system-stored credentials. Callers must obtain visible
-consent; the COSMIC UI defaults this off. This is not desktop secret-agent storage.
+`save_profile` always requests persistent storage (AddConnection2 TO_DISK, flag 1)
+and returns an NM-issued handle. Callers must explain before explicit Add that NM
+saves profiles and credentials on disk. NM owns authorization and backing-file
+permissions; the client never writes profile files itself. This is not desktop
+secret-agent/keyring storage or encrypted-at-rest storage. A refused disk save
+never falls back to memory. There is no session-only save API. Existing in-memory
+profiles can still be observed/controlled, but are not automatically migrated.
 
 ## Observation and explicit control
 
@@ -75,6 +78,8 @@ firewall certification. No profile identifiers, endpoints or credentials are fet
 
 `lab_import` accepts a subscription URL through private stdin,
 without persisting it or putting it in command-line arguments.
+It saves supported profiles and credentials persistently in NM, without activation;
+the URL itself is never saved. Use only with explicit authorization for disk storage.
 Input must reach EOF within 20 seconds and contain at most 4096 bytes. A detached
 standard thread bounds the read before starting the async runtime; on timeout the
 process can exit even if the pipe remains open. Diagnostics never include input.

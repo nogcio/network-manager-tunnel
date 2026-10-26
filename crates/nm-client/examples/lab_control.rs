@@ -1,7 +1,5 @@
 //! Explicit synthetic NM client lifecycle probe, restricted to the disposable VM.
-use nm_tunnel_client::{
-    ConnectionState, Storage, activate, deactivate, save_profile_with_storage, snapshot,
-};
+use nm_tunnel_client::{ConnectionState, activate, deactivate, save_profile, snapshot};
 use nm_tunnel_profile::{Draft, Security};
 use std::{
     net::{Ipv4Addr, SocketAddr},
@@ -70,13 +68,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("PASS: a new client process observed and deactivated the existing NM connection.");
         return Ok(());
     }
-    let [mode, endpoint] = args.as_slice() else {
-        return Err("Expected session|persistent VM_UPLINK_IPV4, or disconnect.".into());
-    };
-    let storage = match mode.as_str() {
-        "session" => Storage::Session,
-        "persistent" => Storage::Persistent,
-        _ => return Err("Invalid storage mode.".into()),
+    let [endpoint] = args.as_slice() else {
+        return Err("Expected VM_UPLINK_IPV4 (saves profile and credentials to disk), inspect, or disconnect.".into());
     };
     let endpoint: Ipv4Addr = endpoint.parse()?;
     if endpoint.is_unspecified() || endpoint.is_multicast() || endpoint.is_loopback() {
@@ -105,12 +98,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     .validate()
     .map_err(|_| "Invalid synthetic profile.")?;
-    let saved = save_profile_with_storage(profile, storage).await?;
+    println!(
+        "Saving the synthetic profile and credentials on disk in NetworkManager; autoconnect is off."
+    );
+    let saved = save_profile(profile).await?;
     let observed = snapshot().await?;
     if !observed
         .profiles
         .iter()
-        .any(|p| p.id() == saved.id() && p.persistent() == (storage == Storage::Persistent))
+        .any(|p| p.id() == saved.id() && p.persistent())
     {
         return Err("NM did not report the requested profile storage.".into());
     }
