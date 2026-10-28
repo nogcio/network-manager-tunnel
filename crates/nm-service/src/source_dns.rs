@@ -96,6 +96,7 @@ impl source_dns::Exchange for Network {
                 },
                 via_proxy: true,
                 tls_name: String::new(),
+                http_path: String::new(),
             },
             DnsOverride::CurrentNetwork => return Err(failed()),
         };
@@ -139,15 +140,32 @@ impl source_dns::Exchange for Network {
         } else {
             Box::new(sockets::tcp(destination, &self.interface).await?)
         };
-        let stream: Box<dyn Payload> = if upstream.transport == DnsTransport::Tls {
-            Box::new(
-                nm_tunnel_engine::wrap_verified_tls(stream, &upstream.tls_name)
-                    .await
-                    .map_err(|_| failed())?,
+        let stream: Box<dyn Payload> =
+            if matches!(upstream.transport, DnsTransport::Tls | DnsTransport::Https) {
+                Box::new(
+                    nm_tunnel_engine::wrap_verified_tls(stream, &upstream.tls_name)
+                        .await
+                        .map_err(|_| failed())?,
+                )
+            } else {
+                stream
+            };
+        if upstream.transport == DnsTransport::Https {
+            let host = upstream
+                .host
+                .as_deref()
+                .map(str::to_owned)
+                .unwrap_or_else(|| upstream.address.to_string());
+            return nm_tunnel_engine::exchange_doh(
+                stream,
+                &host,
+                upstream.port,
+                &upstream.http_path,
+                request,
             )
-        } else {
-            stream
-        };
+            .await
+            .map_err(|_| failed());
+        }
         let mut stream = tokio_util::codec::LengthDelimitedCodec::builder()
             .length_field_length(2)
             .max_frame_length(dns::MAX_DNS_BYTES)

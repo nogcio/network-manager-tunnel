@@ -15,6 +15,21 @@ inventory or a legal certification.
 
 ## Maintenance and native cost
 
+Source DoH directly consumes the already locked crates.io `hyper =1.12.0`
+(`client`, `http1`, defaults off), `hyper-util =0.1.21` (`tokio`, defaults off),
+`http-body-util =0.1.5` and `bytes =1.12.1` (defaults off). These MIT libraries
+are maintained HTTP/body/buffer infrastructure already used by subscription HTTPS;
+their concrete new consumer is the engine's single-exchange HTTP adapter over the
+supervisor's approved verified TLS stream. Cargo.lock retains their registry archive
+checksums and exact resolutions; no new package version or linked native library is
+added. Workspace feature unification still includes the existing HTTP/2 graph,
+but DoH itself selects HTTP/1.1 and creates no socket, connection pool or background
+driver. Existing meow/BoringSSL owns TLS, not a second TLS backend. HTTP parsing now
+runs in privileged source DNS, so dependency audits do not replace independent
+security review of the bounded response, certificate and cancellation boundaries.
+Non-200, compression, unrelated DNS responses and token-bearing settings reject
+without retries/fallback. See [ADR 0020](decisions/0020-native-ipv4-source-policy.md).
+
 COSMIC localization directly consumes the already locked crates.io `i18n-embed`
 0.16.0 (`fluent-system`, `desktop-requester`, default `rust-embed`), `i18n-embed-fl`
 0.10.1 and `rust-embed` 8.13.0, all MIT. The actual consumer is embedded en/ru UI
@@ -82,7 +97,7 @@ the service additionally consumes async-trait for the concrete capability adapte
 The same maintained dependency families and locked advisory/license review apply.
 
 meow-dns and meow-lwip 0.26.1 move from the service into the data plane at the
-unchanged nogcio revision `fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21`;
+nogcio revision `b75aa6db6a0f79101abb68ab5bdcff84f03d07b0`;
 meow-dns defaults stay disabled, lwIP keeps its existing features. Their exact source,
 license evidence and native cost are described below. The data plane also consumes
 the workspace protocol engine with unchanged features. No external version/source,
@@ -157,7 +172,7 @@ native cost. Standard vulnerability/license/maintenance checks still apply; see
 [ADR 0012](decisions/0012-connected-lan-bypass.md) for privilege and policy bounds.
 
 Durable FakeIP directly consumes the already locked `meow-dns` 0.26.1 at
-`fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21`, with default features disabled. Its
+`b75aa6db6a0f79101abb68ab5bdcff84f03d07b0`, with default features disabled. Its
 workspace license is MIT OR Apache-2.0; the same maintained fork/source evidence
 below applies. Pool/MemoryStore are real bounded allocator consumers, not a network
 resolver daemon. Existing graph feature unification still applies, but this adds
@@ -175,28 +190,40 @@ a dependency. Runtime ownership and limits live in
 [ADR 0006](decisions/0006-experimental-nm-runtime.md) and the
 [service contract](../crates/nm-service/README.md).
 
-## Published domain XUDP library API, not yet adopted
+## Adopted domain XUDP library API
 
 The owner-approved opt-in fork patch is published as
 [`b75aa6db6a0f79101abb68ab5bdcff84f03d07b0`][domain-xudp-revision], based on
 `fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21`. It
 extends `ProxyPacketConn` with typed IP/domain reads and writes, plus an explicit
-VLESS Mux.Cool domain entry point. The intended production consumer is our supplied-
-socket engine; a separately built synthetic fork probe exercises the API in the
-existing isolated peer harness. Unsupported adapters reject domain writes by default.
+VLESS Mux.Cool domain entry point. The production consumer is our supplied-socket
+engine, used by the shared data plane for complete-policy FakeIP XUDP Proxy with
+inherited DNS. The isolated peer harness builds that production route consumer.
+Unsupported adapters reject domain writes by default.
 Legacy reads and metadata-based UDP fallback are not automatically opted in.
 
 The patch adds no dependency, crypto, unsafe implementation or native feature.
 Existing MIT/provenance and maintenance ownership in ADR 0004 remain applicable.
 It reuses the library's Mux.Cool framing and cancellation/stream ownership. Source
 metadata remains typed rather than relabeling a different domain as an IP sentinel;
-the future engine consumer still needs an explicit destination-bound response policy.
+the engine requires the exact original domain/port for domain XUDP responses.
+Resolved IPs, unrelated domains/ports and absent sources are rejected without
+fallback. IP XUDP uses typed reads too, avoiding legacy lossy domain projection.
 Library and isolated peer checks are not independent security review.
 
-Publication is not adoption: the production manifest/lockfile still pin
-`fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21`. Final source/feature verification and
-consumer integration are required before updating that pin. No machine-local
-production dependency is added. The fork's selected unit tests and library/probe
+Independent review reproduced inherited Mux.Cool transport retention when its
+outbound queue is full: dropping an association can leave a detached End-frame
+sender awaiting peer progress. The engine contains this at its exclusive per-flow
+supplied transport boundary with synchronous revocation and read/write wakeups,
+including setup cancellation. The regression uses the real pinned mux queue, not
+a packet-connection stand-in. The fork pin/API and other consumers are unchanged;
+this does not assert a library-wide fix or deployed security acceptance.
+
+All consumed meow packages now pin the published immutable
+`b75aa6db6a0f79101abb68ab5bdcff84f03d07b0`. Relative to the previous pin, only the
+reviewed nine-file API/test/documentation patch changes; dependency versions and
+features are unchanged. No machine-local production dependency is added.
+The fork's selected unit tests and library/probe
 Clippy pass; narrow-feature all-target Clippy retains Docker-test helper dead-code
 errors reproduced on its unmodified base. Three optional upstream live-peer tests
 remain ignored, separately from the explicitly executed pinned Xray checks.
@@ -220,7 +247,7 @@ to engine-only builds, using the existing C/assembler toolchain, not another TLS
 backend/service. The public fixture's separate BSD notice is retained in
 [engine fixtures](../crates/engine/tests/fixtures/README.md).
 
-The pinned meow revision remains `fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21`;
+The pinned meow revision is `b75aa6db6a0f79101abb68ab5bdcff84f03d07b0`;
 `meow-proxy` additionally enables `mux` for one-association CommandMux/Mux.Cool
 XUDP, not arbitrary source multiplexing or a connection pool. Feature unification
 also compiles h2mux/yamux/smux modules. New crates.io resolutions are `h2` 0.4.20
@@ -243,7 +270,7 @@ updating Cargo.lock. Repository names below are relative to `https://github.com/
 | --- | --- | --- | --- |
 | iced-rs/cryoglyph | `e429a025df36ab8145708acb309080ae3deec17a` | rev | `LICENSE-MIT`, MIT option |
 | jackpot51/rust-atomicwrites | `043ab4859d53ffd3d55334685303d8df39c9f768` | default branch | `LICENSE`, MIT |
-| nogcio/meow-rs | `fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21` | rev | workspace declarations; lwIP separately below |
+| nogcio/meow-rs | `b75aa6db6a0f79101abb68ab5bdcff84f03d07b0` | rev | workspace declarations; lwIP separately below |
 | pop-os/cosmic-protocols | `c0cff4db14c37ed954983158e4055aa94c7741d9` | abbreviated rev | `src/LICENSE`, MIT |
 | pop-os/dbus-settings-bindings | `eed01dd3609e90e3c8cd043656734c500956c793` | default branch | `LICENSE.md`, MPL-2.0 |
 | pop-os/freedesktop-icons | `ab4c57b8e416c6af9297cb04d101889896fd9a92` | default branch | `LICENSE`, MIT |

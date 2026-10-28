@@ -3,6 +3,49 @@ use nm_tunnel_profile::{DnsOverride, DomainAction, SourcePolicy};
 const POLICY: &str = r#"{"version":1,"dns":{"address":"1.1.1.1","port":853,"transport":"tls","via_proxy":true,"tls_name":"1.1.1.1"},"domain_policy":"{\"version\":1,\"rules\":[{\"domain_suffix\":[\"direct.example\"],\"action\":\"direct\"},{\"domain\":[\"proxy.example\"],\"action\":\"proxy\"},{\"domain\":[\"blocked.example\"],\"action\":\"block\"}]}","fakeip_range":"198.18.0.0/15","tun_address":"172.19.0.1","tun_prefix":30,"mtu":1400}"#;
 
 #[test]
+fn doh_policy_round_trips_and_refuses_unsafe_paths_without_changing_legacy_json()
+-> Result<(), Box<dyn std::error::Error>> {
+    let legacy = SourcePolicy::from_json(POLICY)?;
+    assert!(!legacy.as_json().contains("http_path"));
+    let mut value: serde_json::Value = serde_json::from_str(POLICY)?;
+    value["dns"]["transport"] = serde_json::json!("https");
+    value["dns"]["port"] = serde_json::json!(443);
+    let policy = SourcePolicy::from_json(&value.to_string())?;
+    assert_eq!(policy.dns().http_path, "/dns-query");
+    assert_eq!(
+        SourcePolicy::from_json(policy.as_json())?.as_json(),
+        policy.as_json()
+    );
+    for path in ["/custom", "/"] {
+        value["dns"]["http_path"] = serde_json::json!(path);
+        assert_eq!(
+            SourcePolicy::from_json(&value.to_string())?.dns().http_path,
+            path
+        );
+    }
+    for path in [
+        "//other.invalid",
+        "https://other.invalid",
+        "/dns-query?token=private",
+        "/bad\r\nHeader:x",
+        "/dns#fragment",
+    ] {
+        value["dns"]["http_path"] = serde_json::json!(path);
+        let before = value.to_string();
+        let error = SourcePolicy::from_json(&before)
+            .err()
+            .ok_or("Unsafe path accepted")?;
+        assert!(!error.to_string().contains("private"));
+        assert_eq!(value.to_string(), before);
+    }
+    value["dns"]["http_path"] = serde_json::json!("/dns-query");
+    value["dns"]["transport"] = serde_json::json!("tls");
+    assert!(SourcePolicy::from_json(&value.to_string()).is_err());
+    assert!(!format!("{policy:?}").contains("dns-query"));
+    Ok(())
+}
+
+#[test]
 fn complete_policy_order_does_not_confuse_non_public_with_global_address_classification()
 -> Result<(), Box<dyn std::error::Error>> {
     let policy = SourcePolicy::from_json(POLICY)?;

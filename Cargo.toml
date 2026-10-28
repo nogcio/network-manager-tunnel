@@ -15,10 +15,10 @@ nm-tunnel-client = { path = "crates/nm-client", version = "=0.1.0" }
 nm-tunnel-subscription = { path = "crates/subscription", version = "=0.1.0" }
 nm-tunnel-engine = { path = "crates/engine", version = "=0.1.0" }
 nm-tunnel-dataplane = { path = "crates/dataplane", version = "=0.1.0" }
-lwip = { package = "meow-lwip", version = "=0.26.1", git = "https://github.com/nogcio/meow-rs", rev = "fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21" }
-meow-common = { version = "=0.26.1", git = "https://github.com/nogcio/meow-rs", rev = "fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21" }
-meow-proxy = { version = "=0.26.1", git = "https://github.com/nogcio/meow-rs", rev = "fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21", default-features = false, features = ["vless", "vless-vision", "mux"] }
-meow-transport = { version = "=0.26.1", git = "https://github.com/nogcio/meow-rs", rev = "fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21", default-features = false, features = ["tls", "ws", "reality"] }
+lwip = { package = "meow-lwip", version = "=0.26.1", git = "https://github.com/nogcio/meow-rs", rev = "b75aa6db6a0f79101abb68ab5bdcff84f03d07b0" }
+meow-common = { version = "=0.26.1", git = "https://github.com/nogcio/meow-rs", rev = "b75aa6db6a0f79101abb68ab5bdcff84f03d07b0" }
+meow-proxy = { version = "=0.26.1", git = "https://github.com/nogcio/meow-rs", rev = "b75aa6db6a0f79101abb68ab5bdcff84f03d07b0", default-features = false, features = ["vless", "vless-vision", "mux"] }
+meow-transport = { version = "=0.26.1", git = "https://github.com/nogcio/meow-rs", rev = "b75aa6db6a0f79101abb68ab5bdcff84f03d07b0", default-features = false, features = ["tls", "ws", "reality"] }
 base64 = "0.22"
 percent-encoding = "2.3"
 secrecy = "0.10.3"

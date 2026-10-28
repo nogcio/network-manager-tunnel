@@ -1,4 +1,6 @@
 //! Public engine ownership contracts, using only synthetic loopback sockets.
+#[path = "contracts/doh.rs"]
+mod doh;
 #[path = "contracts/hostname.rs"]
 mod hostname;
 #[path = "contracts/ownership.rs"]

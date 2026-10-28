@@ -3769,7 +3769,7 @@ dependencies = [
 [[package]]
 name = "meow-common"
 version = "0.26.1"
-source = "git+https://github.com/nogcio/meow-rs?rev=fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21#fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21"
+source = "git+https://github.com/nogcio/meow-rs?rev=b75aa6db6a0f79101abb68ab5bdcff84f03d07b0#b75aa6db6a0f79101abb68ab5bdcff84f03d07b0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3793,7 +3793,7 @@ dependencies = [
 [[package]]
 name = "meow-dns"
 version = "0.26.1"
-source = "git+https://github.com/nogcio/meow-rs?rev=fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21#fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21"
+source = "git+https://github.com/nogcio/meow-rs?rev=b75aa6db6a0f79101abb68ab5bdcff84f03d07b0#b75aa6db6a0f79101abb68ab5bdcff84f03d07b0"
 dependencies = [
  "async-trait",
  "dashmap",
@@ -3818,7 +3818,7 @@ dependencies = [
 [[package]]
 name = "meow-lwip"
 version = "0.26.1"
-source = "git+https://github.com/nogcio/meow-rs?rev=fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21#fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21"
+source = "git+https://github.com/nogcio/meow-rs?rev=b75aa6db6a0f79101abb68ab5bdcff84f03d07b0#b75aa6db6a0f79101abb68ab5bdcff84f03d07b0"
 dependencies = [
  "bindgen",
  "bytes",
@@ -3833,7 +3833,7 @@ dependencies = [
 [[package]]
 name = "meow-proxy"
 version = "0.26.1"
-source = "git+https://github.com/nogcio/meow-rs?rev=fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21#fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21"
+source = "git+https://github.com/nogcio/meow-rs?rev=b75aa6db6a0f79101abb68ab5bdcff84f03d07b0#b75aa6db6a0f79101abb68ab5bdcff84f03d07b0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3864,7 +3864,7 @@ dependencies = [
 [[package]]
 name = "meow-transport"
 version = "0.26.1"
-source = "git+https://github.com/nogcio/meow-rs?rev=fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21#fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21"
+source = "git+https://github.com/nogcio/meow-rs?rev=b75aa6db6a0f79101abb68ab5bdcff84f03d07b0#b75aa6db6a0f79101abb68ab5bdcff84f03d07b0"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -3892,7 +3892,7 @@ dependencies = [
 [[package]]
 name = "meow-trie"
 version = "0.26.1"
-source = "git+https://github.com/nogcio/meow-rs?rev=fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21#fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21"
+source = "git+https://github.com/nogcio/meow-rs?rev=b75aa6db6a0f79101abb68ab5bdcff84f03d07b0#b75aa6db6a0f79101abb68ab5bdcff84f03d07b0"
 
 [[package]]
 name = "metal"
@@ -4151,6 +4151,10 @@ name = "nm-tunnel-engine"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "meow-common",
  "meow-proxy",
  "meow-transport",

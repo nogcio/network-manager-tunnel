@@ -156,7 +156,10 @@ See [ADR 0016](decisions/0016-persistent-ipv4-fakeip.md).
 
 The checked complete IPv4 contract adds source DNS, DNS recognition/hijack,
 BitTorrent signatures, QUIC hostname inspection, ordered domain/private-IP actions
-and XUDP. Source DNS/Direct authorization runs protocol libraries in the root
+and XUDP. Source DNS also accepts the bounded sing-box v1.12 typed server schema
+and RFC 8484 HTTP/1.1 DoH over an approved verified TLS stream, with no independent
+HTTP dialer, redirect or fallback. Source DNS/Direct authorization runs protocol
+libraries in the root
 supervisor, expanding the privileged attack surface beyond the legacy design.
 Normal application packet processing remains unprivileged. The exact supported
 shape, bounds, exclusions and required owner review are in

@@ -24,14 +24,15 @@ pub(super) fn parse(
         || !flag(route, "auto_detect_interface", true, ISSUE)?
         || !optional_text(route, "default_interface", ISSUE)?.is_empty()
         || route
-            .get("rule_set")
-            .is_some_and(|v| v.as_array().is_none_or(|v| !v.is_empty()))
-        || route
             .get("default_domain_resolver")
-            .is_some_and(|v| v.as_str() != Some(local_dns))
+            .map(super::dns::options::resolver)
+            .transpose()
+            .map_err(|_| ISSUE)?
+            .is_some_and(|tag| tag != local_dns)
     {
         return Err(ISSUE);
     }
+    let sets = super::rule_sets::InlineSets::parse(route.get("rule_set"))?;
     let rules = route.get("rules").and_then(Value::as_array).ok_or(ISSUE)?;
     if !(5..=68).contains(&rules.len()) {
         return Err(ISSUE);
@@ -60,10 +61,13 @@ pub(super) fn parse(
     {
         return Err(ISSUE);
     }
-    let block = object(&rules[2], &["protocol", "outbound", "action"], ISSUE)?;
+    let block = object(
+        &rules[2],
+        &["protocol", "outbound", "action", "method", "no_drop"],
+        ISSUE,
+    )?;
     if strings(block.get("protocol").ok_or(ISSUE)?, ISSUE)? != ["bittorrent"]
-        || text(block, "outbound", ISSUE)? != outbounds.block
-        || !matches!(optional_text(block, "action", ISSUE)?, "" | "route")
+        || final_action(block, outbounds)? != "block"
     {
         return Err(ISSUE);
     }
@@ -72,41 +76,87 @@ pub(super) fn parse(
         &["ip_is_private", "outbound", "action"],
         ISSUE,
     )?;
-    if !flag(last, "ip_is_private", false, ISSUE)?
-        || text(last, "outbound", ISSUE)? != outbounds.direct
-        || !matches!(optional_text(last, "action", ISSUE)?, "" | "route")
-    {
+    if !flag(last, "ip_is_private", false, ISSUE)? || final_action(last, outbounds)? != "direct" {
         return Err(ISSUE);
     }
     let mut native = Vec::new();
+    let mut expanded_names = 0;
     for rule in &rules[3..rules.len() - 1] {
         let rule = object(
             rule,
-            &["domain", "domain_suffix", "outbound", "action"],
+            &[
+                "domain",
+                "domain_suffix",
+                "rule_set",
+                "outbound",
+                "action",
+                "method",
+                "no_drop",
+            ],
             ISSUE,
         )?;
-        if !matches!(optional_text(rule, "action", ISSUE)?, "" | "route") {
+        let action = final_action(rule, outbounds)?;
+        let (domains, suffixes) = if let Some(references) = rule.get("rule_set") {
+            if rule.contains_key("domain") || rule.contains_key("domain_suffix") {
+                return Err(ISSUE);
+            }
+            let names = sets.referenced(references)?;
+            (names.domains, names.suffixes)
+        } else {
+            let domains = rule
+                .get("domain")
+                .map(|v| strings(v, ISSUE))
+                .transpose()?
+                .unwrap_or_default();
+            let suffixes = rule
+                .get("domain_suffix")
+                .map(|v| strings(v, ISSUE))
+                .transpose()?
+                .unwrap_or_default();
+            (domains, suffixes)
+        };
+        expanded_names += domains.len() + suffixes.len();
+        if expanded_names > 128 {
             return Err(ISSUE);
         }
-        let action = match text(rule, "outbound", ISSUE)? {
-            tag if tag == outbounds.direct => "direct",
-            tag if tag == outbounds.proxy => "proxy",
-            tag if tag == outbounds.block => "block",
-            _ => return Err(ISSUE),
-        };
-        let domains = rule
-            .get("domain")
-            .map(|v| strings(v, ISSUE))
-            .transpose()?
-            .unwrap_or_default();
-        let suffixes = rule
-            .get("domain_suffix")
-            .map(|v| strings(v, ISSUE))
-            .transpose()?
-            .unwrap_or_default();
         native.push(json!({"domain":domains,"domain_suffix":suffixes,"action":action}));
     }
     let text = serde_json::to_string(&json!({"version":1,"rules":native})).map_err(|_| ISSUE)?;
     nm_tunnel_profile::TcpDomainPolicy::from_json(&text).map_err(|_| ISSUE)?;
     Ok(text)
+}
+
+/// Only called after the mandatory sniff/hijack prefix has been checked.
+/// sing-box closes these established/post-sniff flows on reject; this is not
+/// permission to translate a pre-sniff TUN reject requiring RST/ICMP responses.
+fn final_action(
+    map: &serde_json::Map<String, Value>,
+    outbounds: &Outbounds,
+) -> Result<&'static str, PolicyIssue> {
+    match optional_text(map, "action", ISSUE)? {
+        "reject" => {
+            if map.contains_key("outbound")
+                || !matches!(
+                    optional_text(map, "method", ISSUE)?,
+                    "" | "default" | "drop"
+                )
+                || flag(map, "no_drop", false, ISSUE)?
+            {
+                return Err(ISSUE);
+            }
+            Ok("block")
+        }
+        "" | "route" => {
+            if map.contains_key("method") || map.contains_key("no_drop") {
+                return Err(ISSUE);
+            }
+            match text(map, "outbound", ISSUE)? {
+                tag if tag == outbounds.direct => Ok("direct"),
+                tag if tag == outbounds.proxy => Ok("proxy"),
+                tag if outbounds.block.as_deref() == Some(tag) => Ok("block"),
+                _ => Err(ISSUE),
+            }
+        }
+        _ => Err(ISSUE),
+    }
 }

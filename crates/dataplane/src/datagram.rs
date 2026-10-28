@@ -41,15 +41,34 @@ impl Route {
         } else {
             None
         };
-        let resolved = crate::destination::resolve_with_sniffed_name(
-            profile,
-            host,
-            endpoint,
-            destination,
-            lan,
-            hostname,
-        )
-        .await?;
+        let prepared = if profile.node().udp_mode() == nm_tunnel_profile::UdpMode::Xudp {
+            crate::destination::prepare_proxy(profile, host, endpoint, destination, lan, hostname)
+                .await?
+        } else {
+            crate::destination::ProxyDestination::Resolved(
+                crate::destination::resolve_with_sniffed_name(
+                    profile,
+                    host,
+                    endpoint,
+                    destination,
+                    lan,
+                    hostname,
+                )
+                .await?,
+            )
+        };
+        let resolved = match prepared {
+            crate::destination::ProxyDestination::ProxyDomain { name, port } => {
+                let socket = host.open_endpoint(endpoint).await?;
+                return nm_tunnel_engine::connect_udp_domain(
+                    profile, socket, endpoint, &name, port,
+                )
+                .await
+                .map(Self::Proxy)
+                .map_err(|_| io::Error::other("Domain XUDP proxy setup failed."));
+            }
+            crate::destination::ProxyDestination::Resolved(resolved) => resolved,
+        };
         let destination = resolved.address;
         // Legacy UDP never acquires TCP-only hostname inspection semantics.
         let name = crate::destination::routing_name(profile, resolved.domain.as_deref(), hostname);

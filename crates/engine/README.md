@@ -40,10 +40,27 @@ library's CommandMux/Mux.Cool XUDP path: one stream/connection per association,
 native UDP dialer or packet/TUN adapter in this package. Legacy bound UDP carries
 no per-datagram source; the pinned
 library's absent-source sentinel is normalized without accepting unrelated sources.
-Domain-addressed XUDP is not supported by our pinned library API: `write_packet`
-accepts only `SocketAddr`, and Mux.Cool emits an IP in each Keep frame. Initial
-domain metadata alone would not preserve the destination. UDP retains checked
-pre-resolution; there is no local codec or ordinary-UDP substitution for this gap.
+`connect_udp_domain` uses the pinned library's explicit domain XUDP API and typed
+packet reads/writes, preserving the original name in every Keep frame without DNS.
+Domain responses require exactly the bound canonical name and port; absent sources,
+IP substitutions and other domains/ports fail closed, without fallback. Peers that
+return resolved IPs instead of domains are intentionally unsupported on this path.
+IP XUDP accepts only the bound IP/port or absent source metadata, never a domain
+projected to a sentinel. Explicit DNS overrides retain checked pre-resolution.
+
+Each XUDP association retains an exclusive transport owner before protocol setup.
+Its drop synchronously destroys the supplied underlying channel and wakes pending
+read/write operations, before dropping the library association. This prevents the
+pinned mux library's detached End-frame sender from retaining a stalled transport
+when its outbound queue is full. Setup cancellation/failure also revokes ownership;
+invalid-size rejection alone leaves a live association usable. There is no shared
+session/pool revocation, new socket, timeout-based cleanup task or dependency change.
+The library-wide queue behavior remains upstream; this is containment at our
+exclusive-supplied-transport boundary, not a claim of fixing all mux consumers.
+An in-memory regression fills the actual pinned Mux.Cool outbound queue for IP and
+domain associations, cancels the pending send and requires synchronous transport
+destruction without peer progress. Separate tests require both pending I/O directions
+to wake/fail and release shared state. No live peer or privileged test is implied.
 
 The setup deadline is ten seconds. Ownership transfers on entry, including errors and
 cancellation. Errors/Debug are redacted and stream I/O diagnostics are normalized.
@@ -90,6 +107,17 @@ Public RFC 9001 fixtures test our adapter, not upstream cryptography.
 with mandatory verification and a ten-second deadline; it never dials.
 See [ADR 0020](../../docs/decisions/0020-native-ipv4-source-policy.md).
 
+`exchange_doh` supplies RFC 8484 HTTP/1.1 POST framing over an owned, already
+certificate-verified TLS stream. Its source-DNS supervisor consumer retains socket,
+bootstrap, route and certificate authority. The adapter cannot dial or resolve.
+One ten-second deadline owns both Hyper's connection driver and exchange; no
+detached driver, pool, redirects, retry or environment proxy exists. Only HTTP 200
+with one `application/dns-message` content type, no content encoding/trailers and
+1..=4096 response bytes is accepted. Incremental chunk limits apply independently
+of Content-Length; errors and cancellation close the stream. The shared resolver
+then validates DNS question/ID and caches only admitted answers. Synthetic HTTP
+contracts do not establish a live DoH/TLS, full packet or deployed NM acceptance.
+
 Explicit isolated interoperability check (not part of ordinary host checks):
 
 ```sh
@@ -105,8 +133,10 @@ and a 65,549-byte echo through a peer-only synthetic DNS mapping. It does not pr
 the full shared packet runtime or deployed DNS behavior. No Xray installation or
 host networking changes occur.
 
-For an explicit review of a candidate fork API, the harness also accepts
-`--domain-probe /path/to/built/xudp_domain`. This runs that separately built
-synthetic-only probe inside the same isolated namespace, requiring domain XUDP
-echo over REALITY and Vision and per-mode peer evidence. It does not replace the
-engine's dependency pin or make domain XUDP a supported production capability.
+The harness also builds the shared data plane's `xudp_domain` example by default.
+It exercises production `datagram::Route` with owned FakeIP, a distinct observed
+name, no destination DNS/Direct authority, REALITY/Vision echo and size rejection.
+Peer logs must show the original domain. `--domain-probe` can explicitly replace
+that probe with a separately built candidate library probe; such a run does not
+verify the shared route. Neither variant proves full packet-netstack/TUN or deployed
+NetworkManager acceptance.

@@ -19,7 +19,7 @@ futures-util = { version = "0.3", features = ["sink"] }
 hickory-proto = { version = "=0.26.3", default-features = false, features = ["std"] }
 tokio-util = { version = "=0.7.20", features = ["codec"] }
 serde_json = "1"
-meow-dns = { version = "=0.26.1", git = "https://github.com/nogcio/meow-rs", rev = "fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21", default-features = false }
+meow-dns = { version = "=0.26.1", git = "https://github.com/nogcio/meow-rs", rev = "b75aa6db6a0f79101abb68ab5bdcff84f03d07b0", default-features = false }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "sync"] }

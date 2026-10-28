@@ -9,6 +9,7 @@ pub(crate) mod fixtures;
 mod integration;
 mod outbounds;
 mod routing;
+mod rule_sets;
 mod value;
 
 /// Static admission categories; no provider text or unsupported field values.
@@ -119,7 +120,25 @@ pub(crate) fn admit(bytes: &[u8]) -> Result<Subscription, SubscriptionError> {
 
 fn translate(document: &CompleteConfiguration) -> Result<Subscription, PolicyIssue> {
     let outbounds = outbounds::parse(&document.outbounds)?;
-    let dns = dns::parse(document.dns.as_ref().ok_or(PolicyIssue::Dns)?, &outbounds)?;
+    let mut dns_value = document.dns.as_ref().ok_or(PolicyIssue::Dns)?.clone();
+    // Modern configurations replace the deprecated outbound:any DNS rule with an
+    // explicit route bootstrap resolver. Preserve only that same checked role;
+    // routing::parse independently requires it to name the local DNS server.
+    if let Some(resolver) = document
+        .route
+        .as_ref()
+        .and_then(|r| r.get("default_domain_resolver"))
+        .map(dns::options::resolver)
+        .transpose()?
+        && let Some(rules) = dns_value.get_mut("rules").and_then(Value::as_array_mut)
+        && rules.len() == 1
+    {
+        rules.insert(0, serde_json::json!({"outbound":"any", "server":resolver}));
+    }
+    let dns = dns::parse(&dns_value, &outbounds)?;
+    if outbounds.resolvers.iter().any(|tag| tag != &dns.local) {
+        return Err(PolicyIssue::Dns);
+    }
     let domains = routing::parse(
         document.route.as_ref().ok_or(PolicyIssue::Routing)?,
         &outbounds,
@@ -151,5 +170,9 @@ fn translate(document: &CompleteConfiguration) -> Result<Subscription, PolicyIss
     Ok(Subscription::from_complete(profiles))
 }
 
+#[cfg(test)]
+mod action_tests;
+#[cfg(test)]
+mod dns_tests;
 #[cfg(test)]
 mod tests;

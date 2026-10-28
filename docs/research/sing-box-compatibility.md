@@ -69,19 +69,31 @@ differential peer comparison. Neither side proves TUN enforcement or packet isol
 
 ## Remaining semantic and format gaps
 
-- Complete FakeIP TCP Proxy with inherited DNS preserves the original FQDN for remote resolution;
+- Complete FakeIP TCP/XUDP Proxy with inherited DNS preserves the original FQDN
+  for remote resolution;
   only an explicit Direct domain rule performs selected-resolver DNS locally.
   Unresolved FQDNs do not match IP-only rules. Explicit resolver overrides preserve
-  the user's DNS choice by retaining pre-resolution. Legacy/UDP paths still pre-resolve.
-  Domain-addressed XUDP is blocked by the pinned library's IP-only per-packet API,
-  not implemented by substituting an IP sentinel or a handwritten codec.
+  the user's DNS choice by retaining pre-resolution. Legacy bound UDP still pre-resolves.
+  Domain XUDP uses the pinned library's typed per-packet API. Responses must preserve
+  the exact original domain/port: peers returning IP or absent sources are deliberately
+  rejected, not silently relabeled. This is stricter than general sing-box behavior.
 - Direct requires the independent DNS membership check described above. Do not
   remove it to make a comparative test pass.
 - `local` maps to the selected NM uplink's plain IPv4 DNS, not every system resolver
   feature or split-DNS arrangement. IPv6 remains explicitly blocked.
-- Import still requires one selector, legacy FakeIP DNS roles and a fixed ordered
-  rule pipeline. Modern typed DNS, DoH, general rule actions/rule sets, broader
-  transports and outbound graphs remain unsupported, not silently discarded.
+- Import still requires one selector, checked local/FakeIP/one-real-upstream DNS
+  roles and a fixed ordered rule pipeline. Typed sing-box v1.12 DNS servers and
+  bounded HTTP/1.1 DoH are implemented; this does not accept all modern configurations.
+  Resolver string/object forms preserve the local bootstrap role; only `ipv4_only`
+  and neutral cache/TTL/ECS query options are admitted. Post-sniff `reject` maps to
+  closing the flow, without requiring a legacy Block outbound. Pre-sniff RST/ICMP
+  semantics and `no_drop:true` are not implemented or silently approximated.
+  General DNS actions/graphs, DoH headers/query tokens/custom TLS roots, general
+  routing actions, broader transports and outbound graphs still reject. Route
+  inline domain/suffix sets with logical OR compile into existing native ordered
+  matchers, with bounded declaration/expansion budgets and no new Direct authority.
+  AND/inversion, mixed set+domain route groups, IP/CIDR, regex, local/remote/binary
+  sets and DNS rule-set matching remain unsupported, not silently discarded.
 - These comparisons do not validate deployed DNS/FakeIP guards, native NM/Polkit,
   arbitrary providers, contemporary browser fingerprints or the full shared packet
   runtime. [Production security acceptance](../security-review.md) remains incomplete.
@@ -104,6 +116,12 @@ payload bytes. This is engine wire evidence, not TUN/shared-packet-runtime accep
 The sing-box route matrix additionally requires zero project destination DNS queries
 for Block/Proxy and one for Direct. Ordinary contracts cover invalid names/ports,
 endpoint mismatch, cancellation, input closure and no fallback.
+
+The same harness builds a shared `datagram::Route` domain-XUDP probe by default,
+checks REALITY/Vision 1/1400/8192-byte echo and continued traffic after invalid size
+rejection, forbids destination DNS/Direct calls, and requires peer domain evidence.
+The original FakeIP name differs from the supplied observed rule name. This tests
+the production route and engine, not yet the full packet-netstack/TUN path.
 
 [route-reference]: https://github.com/SagerNet/sing-box/blob/v1.12.0/route/route.go
 [domain-reference]: https://github.com/SagerNet/sing-box/blob/v1.12.0/route/rule/rule_item_domain.go

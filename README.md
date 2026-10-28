@@ -23,6 +23,8 @@ or a performance measurement. Production appearance follows the desktop theme.*
 
 - Import the checked native IPv4 subset of complete HTTPS subscriptions, preserving
   supported DNS/FakeIP, ordered routing and XUDP. Unsupported policy rejects atomically.
+  DNS includes bounded legacy or sing-box 1.12 typed servers and verified HTTP/1.1
+  DoH; general DNS policies and arbitrary modern configurations remain unsupported.
 - Explicitly select legacy node-only import for plain/base64 VLESS URI lists.
   Search nodes and add individual profiles, without the provider's DNS/routing rules.
 - Connect and disconnect saved profiles without loading the subscription again.

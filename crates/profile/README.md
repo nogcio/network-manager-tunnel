@@ -117,6 +117,17 @@ acceptance are in [ADR 0016](../../docs/decisions/0016-persistent-ipv4-fakeip.md
 
 ## Execution-facing views
 
+`SourceDns` separates socket IP/optional bootstrap hostname, TLS verification name,
+selected Direct/proxy route and wire transport. `SourceDns::validated` is shared by
+native profile admission and import of every declared resolver, including unused
+ones, so selection cannot hide an invalid endpoint. It performs no I/O.
+HTTPS adds a bounded `http_path`
+(default `/dns-query`) without query/fragment tokens, controls or authority syntax;
+it is omitted from older non-HTTPS JSON so legacy profile encoding stays unchanged.
+Non-HTTPS policies reject nonempty HTTP paths. Debug redacts these identifying
+settings. Validation has no I/O and never upgrades/migrates active or stored profiles;
+the older backend rejects the unknown HTTPS transport instead of downgrading it.
+
 `Profile::routing` exposes checked `RoutingPolicy` semantics rather than a source
 format or NM schema version. `Profile::lan_bypass` returns one mutually exclusive
 `LanBypass` mode, even though editable/imported Drafts retain raw compatibility

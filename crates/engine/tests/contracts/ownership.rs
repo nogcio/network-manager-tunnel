@@ -1,4 +1,6 @@
-use nm_tunnel_engine::{EndpointStream, Error, connect_tcp, connect_tcp_domain, connect_udp};
+use nm_tunnel_engine::{
+    EndpointStream, Error, connect_tcp, connect_tcp_domain, connect_udp, connect_udp_domain,
+};
 use nm_tunnel_profile::{Draft, Profile, Security};
 use std::{
     net::{Ipv4Addr, SocketAddr},
@@ -30,6 +32,16 @@ async fn domain_targets_reject_without_io_and_cancel_owned_transport_without_red
 -> Result<(), Box<dyn std::error::Error>> {
     timeout(Duration::from_secs(5), async {
         let endpoint: SocketAddr = "192.0.2.1:443".parse()?;
+        for udp in [false, true] {
+        let mut draft = profile(endpoint)?.to_draft();
+        if udp {
+            draft.source_policy = Some(nm_tunnel_profile::SourcePolicy::from_json(
+                r#"{"version":1,"dns":{"address":"1.1.1.1","port":853,"transport":"tls","via_proxy":true,"tls_name":"1.1.1.1"},"domain_policy":"{\"version\":1,\"rules\":[{\"domain_suffix\":[\"direct.example\"],\"action\":\"direct\"}]}","fakeip_range":"198.18.0.0/15","tun_address":"172.19.0.1","tun_prefix":30,"mtu":1400}"#,
+            )?);
+            draft.fake_ip = true;
+            draft.dns_interception = true;
+        }
+        let profile = draft.validate().map_err(|_| "Invalid XUDP fixture")?;
         for (name, port, mismatch) in [
             ("https://private-token.example", 443, false),
             ("Upper.example", 443, false),
@@ -44,8 +56,12 @@ async fn domain_targets_reject_without_io_and_cancel_owned_transport_without_red
             } else {
                 endpoint
             };
-            let error = connect_tcp_domain(&profile(endpoint)?, input, approved, name, port)
-                .await
+            let result = if udp {
+                connect_udp_domain(&profile, input, approved, name, port).await.map(|_| ())
+            } else {
+                connect_tcp_domain(&profile, input, approved, name, port).await.map(|_| ())
+            };
+            let error = result
                 .err()
                 .ok_or("Invalid domain flow accepted")?;
             assert!(matches!(error, Error::Endpoint | Error::Configuration));
@@ -56,14 +72,18 @@ async fn domain_targets_reject_without_io_and_cancel_owned_transport_without_red
         }
         let (input, mut peer) = tokio::net::UnixStream::pair()?;
         let input = EndpointStream::relayed(input, endpoint)?;
-        let profile = profile(endpoint)?;
         let task = tokio::spawn(async move {
-            connect_tcp_domain(&profile, input, endpoint, "owned.example", 443).await
+            if udp {
+                connect_udp_domain(&profile, input, endpoint, "owned.example", 443).await.map(|_| ())
+            } else {
+                connect_tcp_domain(&profile, input, endpoint, "owned.example", 443).await.map(|_| ())
+            }
         });
         assert_eq!(peer.read_u8().await?, 22);
         task.abort();
         assert!(task.await.is_err_and(|e| e.is_cancelled()));
         peer.read_to_end(&mut Vec::new()).await?;
+        }
         Ok::<_, Box<dyn std::error::Error>>(())
     })
     .await?

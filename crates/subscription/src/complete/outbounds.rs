@@ -8,7 +8,8 @@ const ISSUE: PolicyIssue = PolicyIssue::Configuration;
 pub(super) struct Outbounds {
     pub proxy: String,
     pub direct: String,
-    pub block: String,
+    pub block: Option<String>,
+    pub resolvers: Vec<String>,
     pub nodes: Vec<(String, Draft)>,
 }
 
@@ -18,6 +19,7 @@ pub(super) fn parse(values: &[Value]) -> Result<Outbounds, PolicyIssue> {
     let mut selector = None;
     let mut direct = None;
     let mut block = None;
+    let mut resolvers = Vec::new();
     for value in values {
         let map = value.as_object().ok_or(ISSUE)?;
         let tag = text(map, "tag", ISSUE)?;
@@ -63,6 +65,13 @@ pub(super) fn parse(values: &[Value]) -> Result<Outbounds, PolicyIssue> {
                 }
             }
             "vless" => {
+                if let Some(resolver) = map.get("domain_resolver") {
+                    resolvers.push(
+                        super::dns::options::resolver(resolver)
+                            .map_err(|_| ISSUE)?
+                            .to_owned(),
+                    );
+                }
                 nodes.insert(tag.to_owned(), node(value)?);
             }
             _ => return Err(ISSUE),
@@ -80,7 +89,8 @@ pub(super) fn parse(values: &[Value]) -> Result<Outbounds, PolicyIssue> {
         proxy,
         nodes,
         direct: direct.ok_or(ISSUE)?,
-        block: block.ok_or(ISSUE)?,
+        block,
+        resolvers,
     })
 }
 
@@ -99,6 +109,7 @@ fn node(value: &Value) -> Result<Draft, PolicyIssue> {
             "packet_encoding",
             "multiplex",
             "domain_strategy",
+            "domain_resolver",
             "network",
             "tcp_fast_open",
             "tcp_multi_path",
@@ -115,6 +126,11 @@ fn node(value: &Value) -> Result<Draft, PolicyIssue> {
         "" | "prefer_ipv4" | "ipv4_only" | "prefer_ipv6"
     ) || flag(map, "tcp_fast_open", false, ISSUE)?
         || flag(map, "tcp_multi_path", false, ISSUE)?
+    {
+        return Err(ISSUE);
+    }
+    if map.contains_key("domain_resolver")
+        && !optional_text(map, "domain_strategy", ISSUE)?.is_empty()
     {
         return Err(ISSUE);
     }

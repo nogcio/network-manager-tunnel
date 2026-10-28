@@ -13,6 +13,8 @@ pub enum DnsTransport {
     Tcp,
     /// Length-framed DNS over certificate-verified TLS.
     Tls,
+    /// RFC 8484 POST over certificate-verified HTTPS, without redirects/fallback.
+    Https,
 }
 
 /// One checked source DNS endpoint. Debug is redacted; names can identify a source.
@@ -33,11 +35,71 @@ pub struct SourceDns {
     pub via_proxy: bool,
     /// TLS verification identity; empty for plain DNS, never verification-disabled.
     pub tls_name: String,
+    /// Bounded origin-form DoH path, without query tokens; empty on other transports.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub http_path: String,
 }
 
 impl std::fmt::Debug for SourceDns {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("SourceDns([redacted])")
+    }
+}
+
+impl SourceDns {
+    /// Validate and canonicalize one DNS endpoint without I/O. Used by profile
+    /// admission and by the importer for every declared real DNS server, including
+    /// unselected ones. Addresses, TLS identities and paths never appear in errors.
+    /// No resolver lookup, route permission or fallback is implied by success.
+    ///
+    /// # Errors
+    /// Returns [`PolicyError`] for unsupported addresses, contradictory host/IP,
+    /// zero ports, invalid TLS identity or nonrepresentable HTTP paths/options.
+    pub fn validated(mut self) -> Result<Self, PolicyError> {
+        if self.port == 0
+            || (self.host.is_none()
+                && crate::DnsOverride::ProxyIpv4(self.address)
+                    .validate()
+                    .is_err())
+        {
+            return Err(PolicyError);
+        }
+        if let Some(host) = &mut self.host {
+            if !self.address.is_unspecified() {
+                return Err(PolicyError);
+            }
+            *host = canonical_domain(host).ok_or(PolicyError)?;
+        }
+        if matches!(self.transport, DnsTransport::Tls | DnsTransport::Https) {
+            if let Some(name) = canonical_domain(&self.tls_name) {
+                self.tls_name = name;
+            } else if self.host.is_some()
+                || self.tls_name.parse::<Ipv4Addr>().ok() != Some(self.address)
+            {
+                return Err(PolicyError);
+            }
+        } else if !self.tls_name.is_empty() {
+            return Err(PolicyError);
+        }
+        if self.transport == DnsTransport::Https {
+            if self.http_path.is_empty() {
+                self.http_path = "/dns-query".into();
+            }
+            let path = &self.http_path;
+            if path.len() > 1024
+                || !path.starts_with('/')
+                || path.starts_with("//")
+                || !path
+                    .bytes()
+                    .all(|b| b.is_ascii_graphic() && !matches!(b, b'?' | b'#' | b'\\'))
+                || path.parse::<http::uri::PathAndQuery>().is_err()
+            {
+                return Err(PolicyError);
+            }
+        } else if !self.http_path.is_empty() {
+            return Err(PolicyError);
+        }
+        Ok(self)
     }
 }
 
@@ -79,11 +141,6 @@ impl SourcePolicy {
         }
         let mut document: Document = serde_json::from_str(text).map_err(|_| PolicyError)?;
         if document.version != 1
-            || document.dns.port == 0
-            || (document.dns.host.is_none()
-                && crate::DnsOverride::ProxyIpv4(document.dns.address)
-                    .validate()
-                    .is_err())
             || !matches!(
                 document.fakeip_range.as_str(),
                 "198.18.0.0/16" | "198.18.0.0/15"
@@ -94,12 +151,7 @@ impl SourcePolicy {
         {
             return Err(PolicyError);
         }
-        if let Some(host) = &mut document.dns.host {
-            if !document.dns.address.is_unspecified() {
-                return Err(PolicyError);
-            }
-            *host = canonical_domain(host).ok_or(PolicyError)?;
-        }
+        document.dns = document.dns.validated()?;
         let mask = u32::MAX << (32 - document.tun_prefix);
         let network = u32::from(document.tun_address) & mask;
         let broadcast = network | !mask;
@@ -107,17 +159,6 @@ impl SourcePolicy {
             || !Ipv4Addr::from(broadcast).is_private()
             || matches!(u32::from(document.tun_address), ip if ip == network || ip == broadcast)
         {
-            return Err(PolicyError);
-        }
-        if document.dns.transport == DnsTransport::Tls {
-            if let Some(name) = canonical_domain(&document.dns.tls_name) {
-                document.dns.tls_name = name;
-            } else if document.dns.host.is_some()
-                || document.dns.tls_name.parse::<Ipv4Addr>().ok() != Some(document.dns.address)
-            {
-                return Err(PolicyError);
-            }
-        } else if !document.dns.tls_name.is_empty() {
             return Err(PolicyError);
         }
         let domains = TcpDomainPolicy::from_json(&document.domain_policy)?;

@@ -248,12 +248,19 @@ complete importer uses a separate checked `source-policy`, not this legacy overl
 
 `vpn.data.source-policy` requires schema v2, persistent FakeIP and interception;
 legacy LAN/TCP overlays reject. Source DNS/Direct authority runs selected-resolver
-VLESS/XUDP/TLS libraries in root, unlike the legacy worker protocol path. Root
+VLESS/XUDP/TLS and bounded DoH HTTP libraries in root, unlike the legacy worker protocol path. Root
 revalidates Direct requests and retains all IP sockets. Capture prefixes do not
 grant sockets or physical firewall exceptions. Source defaults never silently
 replace unsupported policy. The supported shape, resource limits, privacy,
 privilege expansion and pending native/boot/security acceptance are specified in
 [ADR 0020](../../docs/decisions/0020-native-ipv4-source-policy.md).
+
+DoH uses one approved selected-route TCP stream, mandatory certificate verification
+and the engine's bounded HTTP/1.1 POST adapter. HTTP authority and optional TLS name
+remain distinct; hostname bootstrap still uses the declared local role. No URL
+client, environment proxy, redirect, implicit socket or resolver fallback is added.
+The shared resolver validates DNS replies before cache/Direct authorization. These
+synthetic contracts do not establish live DoH, privileged VM or packet acceptance.
 
 HTTP Host/TLS SNI is inspected with the library before socket admission (8 KiB,
 300 ms), preserving and replaying consumed bytes once. First matching rule wins:

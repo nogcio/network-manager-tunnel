@@ -24,10 +24,10 @@ def checked_peer(path):
     return path
 
 
-def build(root):
-    print("[1/2] Build project-owned engine probe (locked dependencies)", flush=True)
+def build(root, package="nm-tunnel-engine", example="probe"):
+    print(f"[1/2] Build project-owned {package}/{example} (locked dependencies)", flush=True)
     command = ["timeout", "--kill-after=3s", "180s", "cargo", "build", "--locked",
-               "-p", "nm-tunnel-engine", "--example", "probe", "--message-format=json"]
+               "-p", package, "--example", example, "--message-format=json"]
     executable = None
     with subprocess.Popen(command, cwd=root, stdout=subprocess.PIPE, text=True) as process:
         for line in process.stdout:
@@ -39,7 +39,7 @@ def build(root):
             if message.get("reason") == "compiler-message":
                 print(message["message"].get("rendered", ""), end="", flush=True)
             if (message.get("reason") == "compiler-artifact"
-                    and message.get("target", {}).get("name") == "probe"
+                    and message.get("target", {}).get("name") == example
                     and message.get("executable")):
                 executable = pathlib.Path(message["executable"]).resolve()
         if process.wait() != 0 or executable is None:
@@ -191,7 +191,8 @@ def main():
         if shutil.which(tool) is None:
             raise RuntimeError(f"Required tool unavailable: {tool}; no skipped pass")
     peer = checked_peer(args.peer)
-    domain_probe = args.domain_probe.resolve(strict=True) if args.domain_probe else None
+    domain_probe = args.domain_probe.resolve(strict=True) if args.domain_probe else build(
+        root, "nm-tunnel-dataplane", "xudp_domain")
     if domain_probe is not None and (not domain_probe.is_file() or not os.access(domain_probe, os.X_OK)):
         raise RuntimeError("Domain probe is not an executable file")
     probe = build(root)

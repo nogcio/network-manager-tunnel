@@ -3,6 +3,8 @@ use super::{PolicyIssue, outbounds::Outbounds, value::*};
 use nm_tunnel_profile::{DnsTransport, SourceDns};
 use serde_json::Value;
 use std::collections::HashMap;
+mod modern;
+pub(super) mod options;
 const ISSUE: PolicyIssue = PolicyIssue::Dns;
 
 pub(super) struct Dns {
@@ -11,6 +13,17 @@ pub(super) struct Dns {
     pub local: String,
 }
 pub(super) fn parse(value: &Value, outbounds: &Outbounds) -> Result<Dns, PolicyIssue> {
+    if value
+        .get("servers")
+        .and_then(Value::as_array)
+        .is_some_and(|servers| servers.iter().any(|s| s.get("type").is_some()))
+    {
+        return modern::parse(value, outbounds);
+    }
+    parse_legacy(value, outbounds)
+}
+
+fn parse_legacy(value: &Value, outbounds: &Outbounds) -> Result<Dns, PolicyIssue> {
     let dns = object(
         value,
         &[
@@ -140,7 +153,24 @@ pub(super) fn parse(value: &Value, outbounds: &Outbounds) -> Result<Dns, PolicyI
     let mut client = false;
     let mut outbound = false;
     for rule in rules {
-        let rule = object(rule, &["query_type", "outbound", "server"], ISSUE)?;
+        let rule = object(
+            rule,
+            &[
+                "query_type",
+                "outbound",
+                "server",
+                "action",
+                "strategy",
+                "disable_cache",
+                "rewrite_ttl",
+                "client_subnet",
+            ],
+            ISSUE,
+        )?;
+        options::route_options(rule)?;
+        if !matches!(optional_text(rule, "action", ISSUE)?, "" | "route") {
+            return Err(ISSUE);
+        }
         if rule.contains_key("query_type") && !rule.contains_key("outbound") {
             let mut types = strings(rule.get("query_type").ok_or(ISSUE)?, ISSUE)?;
             types.sort();
@@ -171,6 +201,9 @@ pub(super) fn parse(value: &Value, outbounds: &Outbounds) -> Result<Dns, PolicyI
 }
 
 fn parse_upstream(address: &str, via_proxy: bool) -> Result<SourceDns, PolicyIssue> {
+    if address.len() > 2048 || !address.bytes().all(|b| b.is_ascii_graphic() && b != b'\\') {
+        return Err(ISSUE);
+    }
     let url = url::Url::parse(&if address.contains("://") {
         address.into()
     } else {
@@ -179,7 +212,7 @@ fn parse_upstream(address: &str, via_proxy: bool) -> Result<SourceDns, PolicyIss
     .map_err(|_| ISSUE)?;
     if !url.username().is_empty()
         || url.password().is_some()
-        || !matches!(url.path(), "" | "/")
+        || (url.scheme() != "https" && !matches!(url.path(), "" | "/"))
         || url.query().is_some()
         || url.fragment().is_some()
     {
@@ -189,31 +222,47 @@ fn parse_upstream(address: &str, via_proxy: bool) -> Result<SourceDns, PolicyIss
         "udp" => DnsTransport::Udp,
         "tcp" => DnsTransport::Tcp,
         "tls" => DnsTransport::Tls,
+        "https" => DnsTransport::Https,
         _ => return Err(ISSUE),
     };
     let server = url.host_str().ok_or(ISSUE)?;
-    let (address, host) = match server.parse::<std::net::Ipv4Addr>() {
+    let (ip_address, host) = match server.parse::<std::net::Ipv4Addr>() {
         Ok(address) => (address, None),
         Err(_) => (
             std::net::Ipv4Addr::UNSPECIFIED,
             Some(nm_tunnel_profile::canonical_domain(server).ok_or(ISSUE)?),
         ),
     };
-    let port = url.port().unwrap_or(if transport == DnsTransport::Tls {
-        853
-    } else {
-        53
+    let port = url.port().unwrap_or(match transport {
+        DnsTransport::Tls => 853,
+        DnsTransport::Https => 443,
+        _ => 53,
     });
-    Ok(SourceDns {
-        address,
+    let http_path = if transport == DnsTransport::Https {
+        let raw_path = address
+            .split_once("://")
+            .and_then(|(_, rest)| rest.find('/').map(|n| &rest[n..]));
+        match raw_path {
+            None => "/dns-query".to_owned(),
+            Some(path) if path == url.path() => path.to_owned(),
+            _ => return Err(ISSUE),
+        }
+    } else {
+        String::new()
+    };
+    SourceDns {
+        address: ip_address,
         host,
         port,
         transport,
         via_proxy,
-        tls_name: if transport == DnsTransport::Tls {
+        tls_name: if matches!(transport, DnsTransport::Tls | DnsTransport::Https) {
             server.to_owned()
         } else {
             String::new()
         },
-    })
+        http_path,
+    }
+    .validated()
+    .map_err(|_| ISSUE)
 }

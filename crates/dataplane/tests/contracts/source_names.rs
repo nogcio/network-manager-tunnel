@@ -80,7 +80,7 @@ async fn complete_rules_use_observed_name_but_dns_keeps_the_original_identity() 
                             .queries
                             .lock()
                             .map_err(|_| io::Error::other("Test lock failed."))?,
-                        usize::from(expected.is_some() && !(tcp && expected == Some("proxy")))
+                        usize::from(expected == Some("direct"))
                     );
                 }
             }
@@ -174,6 +174,57 @@ async fn explicit_dns_overrides_keep_destination_resolution_for_tcp_proxy() -> i
     })
     .await
     .map_err(|_| io::Error::other("Override contract deadline."))?
+}
+
+#[tokio::test]
+async fn explicit_dns_overrides_keep_xudp_resolution_and_refusal_never_falls_back() -> io::Result<()>
+{
+    tokio::time::timeout(Duration::from_secs(5), async {
+        for override_mode in [
+            nm_tunnel_profile::DnsOverride::CurrentNetwork,
+            nm_tunnel_profile::DnsOverride::ProxyIpv4(std::net::Ipv4Addr::new(9, 9, 9, 9)),
+        ] {
+            let mut draft = fixture::profile()?.to_draft();
+            draft.dns_override = override_mode;
+            let profile = draft
+                .validate()
+                .map_err(|_| io::Error::other("Invalid override fixture."))?;
+            let host = Observe {
+                original: "proxy.example".into(),
+                route: Mutex::new(None),
+                queries: Mutex::new(0),
+            };
+            assert!(
+                Route::connect_named(
+                    &profile,
+                    &host,
+                    SocketAddr::from(([192, 0, 2, 1], 443)),
+                    SocketAddr::from(([198, 18, 0, 4], 8443)),
+                    &NoLan,
+                    Some("proxy.example")
+                )
+                .await
+                .is_err()
+            );
+            assert_eq!(
+                *host
+                    .route
+                    .lock()
+                    .map_err(|_| io::Error::other("Test lock failed."))?,
+                Some("proxy")
+            );
+            assert_eq!(
+                *host
+                    .queries
+                    .lock()
+                    .map_err(|_| io::Error::other("Test lock failed."))?,
+                1
+            );
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|_| io::Error::other("XUDP override contract deadline."))?
 }
 
 #[tokio::test]

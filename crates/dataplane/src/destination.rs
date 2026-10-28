@@ -118,7 +118,7 @@ async fn resolve_name(
     })
 }
 
-pub(crate) enum TcpDestination {
+pub(crate) enum ProxyDestination {
     /// An owned original name routed through Proxy, never a Direct capability.
     ProxyDomain {
         name: String,
@@ -127,18 +127,18 @@ pub(crate) enum TcpDestination {
     Resolved(Destination),
 }
 
-/// Resolve only ownership before routing a complete FakeIP TCP destination.
+/// Resolve only ownership before routing a complete FakeIP TCP/XUDP destination.
 /// Unresolved FQDNs do not match IP-only rules. Direct resolves the original name
 /// through the selected DNS and still requires independent Host authorization.
 /// Explicit DNS overrides retain pre-resolution rather than moving DNS remotely.
-pub(crate) async fn prepare_tcp(
+pub(crate) async fn prepare_proxy(
     profile: &nm_tunnel_profile::Profile,
     broker: &(impl Host + ?Sized),
     endpoint: SocketAddr,
     destination: SocketAddr,
     lan: &(impl LanScope + ?Sized),
     observed: Option<&str>,
-) -> io::Result<TcpDestination> {
+) -> io::Result<ProxyDestination> {
     let synthetic = match destination.ip() {
         IpAddr::V4(ip) => profile.network().source().is_some_and(|s| s.synthetic(ip)),
         _ => false,
@@ -146,13 +146,13 @@ pub(crate) async fn prepare_tcp(
     if !synthetic || profile.network().dns_override() != nm_tunnel_profile::DnsOverride::Inherit {
         return resolve_with_sniffed_name(profile, broker, endpoint, destination, lan, observed)
             .await
-            .map(TcpDestination::Resolved);
+            .map(ProxyDestination::Resolved);
     }
     if destination.port() == 0
         || !profile.network().fake_ip()
         || observed.is_some_and(|n| nm_tunnel_profile::canonical_domain(n).as_deref() != Some(n))
     {
-        return Err(io::Error::other("Invalid complete TCP destination."));
+        return Err(io::Error::other("Invalid complete destination."));
     }
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         let IpAddr::V4(ip) = destination.ip() else {
@@ -173,9 +173,9 @@ pub(crate) async fn prepare_tcp(
             Some(nm_tunnel_profile::DomainAction::Direct) => {
                 resolve_name(profile, broker, endpoint, destination, lan, name)
                     .await
-                    .map(TcpDestination::Resolved)
+                    .map(ProxyDestination::Resolved)
             }
-            _ => Ok(TcpDestination::ProxyDomain {
+            _ => Ok(ProxyDestination::ProxyDomain {
                 name,
                 port: destination.port(),
             }),

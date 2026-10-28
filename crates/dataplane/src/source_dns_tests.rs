@@ -2,6 +2,53 @@ use super::*;
 use std::net::Ipv4Addr;
 
 struct Refuse;
+
+#[tokio::test]
+async fn selected_doh_failure_or_unrelated_response_never_publishes_cache_or_retries()
+-> io::Result<()> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Fail(AtomicUsize, bool);
+    #[async_trait::async_trait]
+    impl Exchange for Fail {
+        async fn exchange(&self, profile: &Profile, bytes: &[u8], _: bool) -> io::Result<Vec<u8>> {
+            assert_eq!(
+                profile
+                    .network()
+                    .source()
+                    .ok_or_else(failed)?
+                    .dns()
+                    .transport,
+                nm_tunnel_profile::DnsTransport::Https
+            );
+            self.0.fetch_add(1, Ordering::SeqCst);
+            if self.1 {
+                return Err(failed());
+            }
+            let mut reply = dns::parse_query(bytes)?;
+            reply.metadata.message_type = hickory_proto::op::MessageType::Response;
+            reply.metadata.id = reply.metadata.id.wrapping_add(1);
+            reply.to_vec().map_err(io::Error::other)
+        }
+    }
+    let mut draft = source_profile()?.to_draft();
+    let encoded = draft
+        .source_policy
+        .as_ref()
+        .ok_or_else(failed)?
+        .as_json()
+        .replace("\"transport\":\"tls\"", "\"transport\":\"https\"");
+    draft.source_policy =
+        Some(nm_tunnel_profile::SourcePolicy::from_json(&encoded).map_err(io::Error::other)?);
+    let profile = draft.validate().map_err(|_| failed())?;
+    let (_, query) = dns::query("direct.example")?;
+    for refuse in [false, true] {
+        let mut resolver = Resolver::new(profile.clone(), Fail(AtomicUsize::new(0), refuse));
+        assert!(resolver.query(&query, false).await.is_err());
+        assert!(resolver.cache.is_empty());
+        assert_eq!(resolver.transport.0.load(Ordering::SeqCst), 1);
+    }
+    Ok(())
+}
 #[async_trait::async_trait]
 impl Exchange for Refuse {
     async fn exchange(&self, _: &Profile, _: &[u8], _: bool) -> io::Result<Vec<u8>> {

@@ -84,7 +84,7 @@ pub async fn route_tcp<I: AsyncRead + AsyncWrite + Unpin>(
             return Ok(());
         }
     }
-    let prepared = destination::prepare_tcp(
+    let prepared = destination::prepare_proxy(
         profile,
         broker,
         endpoint,
@@ -94,8 +94,8 @@ pub async fn route_tcp<I: AsyncRead + AsyncWrite + Unpin>(
     )
     .await?;
     let resolved = match prepared {
-        destination::TcpDestination::Resolved(resolved) => resolved,
-        destination::TcpDestination::ProxyDomain { name, port } => {
+        destination::ProxyDestination::Resolved(resolved) => resolved,
+        destination::ProxyDestination::ProxyDomain { name, port } => {
             return forward_tcp(inbound, async {
                 let socket = broker.open_endpoint(endpoint).await?;
                 let mut remote =

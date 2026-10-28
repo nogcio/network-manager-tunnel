@@ -40,7 +40,8 @@ missing policy. JSON is decoded using serde/serde_json with a recursion bound an
 recursive unknown/duplicate fields rejected. It is untrusted data, never commands.
 
 The experimental supported subset is one selector of validated VLESS nodes,
-legacy FakeIP/local/selected-real DNS roles and the exact ordered route pipeline
+legacy or sing-box 1.12 typed FakeIP/local/selected-real DNS roles and the exact
+ordered route pipeline
 in [ADR 0020](../../docs/decisions/0020-native-ipv4-source-policy.md). Every node
 gets an owned native policy; any unsupported required setting rejects the whole
 document with a static `UnsupportedPolicy` category. No partial nodes are extracted.
@@ -50,6 +51,60 @@ their values are never executed/fetched/persisted. Required native policy names 
 stored in NM, not logs, and credentials remain separate NM secrets. Per-profile DNS
 overrides do not disable required FakeIP/interception. IPv6 is explicitly deferred.
 The actual private provider and native runtime/boot acceptance remain unverified.
+
+Typed DNS servers support `udp`, `tcp`, `tls`, `https`, `local` and `fakeip` only.
+The same single-real-upstream/local-bootstrap/FakeIP role contract still applies;
+this is not general DNS-rule or contemporary full-configuration compatibility.
+Typed servers default to Direct when `detour` is absent, unlike legacy servers.
+Resolver hostnames require a `domain_resolver` naming local bootstrap, as a string
+or checked object. The same forms are accepted for `route.default_domain_resolver`
+and VLESS endpoint bootstrap; all must name the same local role. Object `strategy`
+may be omitted or `ipv4_only`; `disable_cache:false`, `rewrite_ttl:null` and
+`client_subnet:null` are accepted without changing the existing native contract.
+Active cache/TTL/ECS modifiers and other strategy preferences reject rather than
+silently applying to a different query or resolver.
+`route.default_domain_resolver` may replace the deprecated `outbound:any` DNS rule
+only when it names that same local role. Client A/AAAA must still route to FakeIP;
+`action:route` accepts the same checked query options. Other DNS actions reject.
+Independent caching
+must remain explicitly enabled. Mixed typed/legacy server lists or dual FakeIP
+declarations reject atomically. IPv6 resolver endpoints remain unsupported.
+
+DoH accepts typed `https` or legacy `https://` upstreams. The default port/path is
+443 and `/dns-query`; an explicit origin path and verified `tls.server_name` are
+preserved. Only optional `tls.enabled:true` and `tls.server_name` are supported:
+custom TLS roots, insecure TLS, client certificates and other TLS options reject.
+Custom nonempty headers, query/fragment tokens, credentials and redirects are not
+supported. Execution uses one bounded RFC 8484 POST over verified HTTP/1.1 through
+the selected route, never application environment proxies or resolver fallback.
+
+Routing still requires the fixed sniff → DNS hijack → BitTorrent block → ordered
+domain rules → private-IP Direct pipeline. Modern `action:route` and post-sniff
+`action:reject` can replace legacy route/block rules without requiring a `block`
+outbound. Reject methods omitted/`default`/`drop` map to closing these already
+established/post-sniff flows, not a new pre-sniff TCP RST/ICMP implementation.
+`no_drop:true`, reject+outbound ambiguity, destination overrides, timeout/fragment
+route options, arbitrary resolve actions and reordered pipelines reject atomically.
+
+Route `rule_set` supports domain-only inline declarations (`type:inline` or omitted)
+and string/list references in the ordered domain-rule portion of that pipeline.
+Headless exact/suffix alternatives, set entries, multiple referenced sets and nested
+logical `or` are ORed into one native rule with the referring route's action. The
+route order, first-match behavior and leading-dot subdomains-only suffix semantics
+are preserved. Tags/source containers are discarded after compilation; only checked
+native domain matchers persist. The shared worker and independent Direct authorizer
+consume that same existing policy; a set never grants a socket or bypasses FakeIP.
+
+Admission limits are 32 declarations, 128 total headless nodes, depth 8, 128 declared
+names and 16 KiB of serialized declarations. The existing native limits still apply:
+64 domain rules, 128 names after expansion (including repeated references), and a
+16 KiB encoded policy. Every declaration validates, including unused sets. Empty
+sets/leaves, duplicate tags, unknown references/fields and any exceeded bound reject
+the whole import. Logical `and`, inversion, set-to-set references, mixed route
+`rule_set`+domain match groups, IP/CIDR, regex and other headless conditions reject
+rather than broadening a match. DNS rule-set matching is not implemented. Local
+paths, remote URLs, binary sets and refresh/download settings are never opened,
+fetched, persisted or silently ignored; they remain unsupported.
 
 ### Explicit legacy node-only mode
 

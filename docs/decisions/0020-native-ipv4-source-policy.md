@@ -8,7 +8,9 @@ installation does not certify these properties or arbitrary sing-box input.
 
 The complete importer translates one checked source shape into native profiles:
 one selector of VLESS TCP TLS/REALITY/Vision or WebSocket TLS nodes, one Direct
-and one Block outbound, legacy FakeIP DNS roles, and an ordered route pipeline.
+and an optional legacy Block outbound, checked legacy or typed FakeIP DNS roles,
+and an ordered route pipeline. Modern post-sniff reject rules do not need a Block
+outbound.
 Every node must validate before any result is returned. Recursive duplicate and
 unknown keys reject. Unsupported settings never cause node extraction, retries,
 an alternate outbound, or a node-only request.
@@ -36,16 +38,73 @@ Complete FakeIP TCP Proxy with inherited DNS retains the owned original FQDN ins
 pre-resolving it. Only an explicit Direct domain rule resolves it locally through
 the selected DNS, followed by independent Direct authorization. An unresolved FQDN
 does not match IP-only rules. Explicit resolver overrides retain pre-resolution
-to preserve the user's DNS selection. Legacy and UDP paths retain pre-resolution; the
-pinned Mux.Cool per-packet API cannot yet preserve XUDP domain destinations.
+to preserve the user's DNS selection. Complete-policy XUDP now uses the same owned
+original-name preparation as TCP, through the pinned library's typed domain API.
+Each packet retains the domain; responses must carry exactly that name and port.
+IP/absent domain responses reject without fallback. Legacy bound UDP retains
+pre-resolution. This introduces no persisted profile or FakeIP identity migration.
 
-Source DNS supports one selected UDP, TCP or certificate-verified TLS resolver,
+Source DNS supports one selected UDP, TCP, certificate-verified TLS or HTTPS resolver,
 through the selected proxy or explicitly Direct. Resolver hostnames require the
 declared local bootstrap role, mapped to NM's selected-uplink plain IPv4 DNS.
 Bootstrap A answers are bound to the question/CNAME chain. There is no resolver
 fallback. The response cache is bounded to 256 entries, question/transport-bound,
 activation-local and TTL-aged; it is not the durable FakeIP identity store.
 Explicit per-profile DNS overrides remain independent of the imported resolver.
+
+The typed DNS subset follows sing-box v1.12.0: `udp`, `tcp`, `tls`, `https`,
+`local` and `fakeip` servers with checked tags and explicit local hostname bootstrap.
+Unlike legacy DNS, typed servers default to Direct without `detour`. A checked
+`route.default_domain_resolver` naming local may replace the deprecated outbound
+DNS rule; client A/AAAA still uses FakeIP. Other DNS actions, resolver graphs,
+active per-query modifiers, TLS overrides and nonempty HTTP headers reject atomically.
+String shorthand and object forms of `domain_resolver` are admitted for typed DNS
+servers, VLESS endpoint bootstrap and the route default only when they select the
+same declared local role. Object `strategy` is omitted or `ipv4_only`; cache/TTL/ECS
+fields are absent or their neutral false/null values. DNS `action:route` uses the
+same checked options. Non-neutral options and conflicting legacy `domain_strategy`
+plus explicit endpoint `domain_resolver` reject, rather than weakening authority.
+
+After the mandatory sniff/hijack prefix, modern route rules may use explicit
+`action:route` or `action:reject`. Reject without an outbound translates to native
+Block for BitTorrent or ordered domain rules. Omitted/default/drop reject methods
+close these established/post-sniff flows as in the sing-box reference; this is not
+general pre-sniff TUN rejection with TCP RST/ICMP responses. `no_drop:true` and
+reject+outbound ambiguity reject. The fixed order and final private-IP Direct
+rule remain mandatory, and route destination overrides, extra resolve actions,
+timeout/fragment modifiers and unsupported rule-set conditions are not discarded
+or approximated.
+
+Domain-only inline route sets are compiled into the existing ordered domain-policy
+without a new runtime matcher, resolver, storage format or Direct capability.
+Declarations use `type:inline` (or omit type), a unique tag and nonempty headless
+rules. Exact/suffix alternatives, set entries, referenced tag lists and logical OR
+nodes form a union under the referring route's action. Source route order and
+first-match behavior remain unchanged. Combining a set reference with an explicit
+domain group would require an AND, so this form rejects instead of unioning it.
+All declarations validate, even unused ones. Limits are 32 sets, 128 headless nodes,
+depth 8, 128 declared names and 16 KiB serialized declarations; the native 64-rule,
+128-expanded-name and 16-KiB policy budgets remain unchanged. Repeated references
+consume the expanded budget. Logical AND, inversion, recursive references, IP/CIDR,
+regex, other conditions, local/remote/binary sets and DNS rule-set matching reject.
+No referenced file is read and no URL is fetched. Native names, not source tags or
+containers, survive compilation. This adds format compatibility, not independent
+packet/security acceptance or authorization beyond the existing selected-resolver
+Direct check.
+
+DoH uses RFC 8484 POST over certificate-verified HTTP/1.1, one approved socket,
+no redirect/retry/environment proxy and no fallback. Default port/path is 443 and
+`/dns-query`; only bounded origin paths without query/fragment tokens are stored.
+An optional TLS identity remains separate from HTTP authority and socket address.
+Only status 200, `application/dns-message`, no content encoding/trailers, and a
+1..=4096-byte DNS response is accepted. Hyper owns HTTP framing, including chunking;
+the shared resolver still binds DNS replies to the question/ID before cache admission.
+The ten-second total exchange budget includes bootstrap, transport, TLS and HTTP.
+Cancellation drops both driver and socket without detached work. HTTP parsing now
+runs in the root source-DNS path, expanding privileged surface; synthetic contracts
+are not independent security or live DoH acceptance. Old profiles omit the optional
+native `http_path` field unchanged; an older backend rejects new HTTPS transports,
+not downgrades them. Existing NM profiles and active sessions are never migrated.
 
 Client A/AAAA FakeIP uses the durable non-reassigning `/16` allocator, with empty
 IPv6 answers. Source `/15` reservations are accepted but never allocate extra
@@ -110,3 +169,11 @@ bounded route-decision matrix, not wire or deployed equivalence.
 - [sing-box v1.12.0 sniff reference](https://github.com/SagerNet/sing-box/tree/v1.12.0/common/sniff)
 - [sing v0.7.0-beta.2 address classification](https://github.com/SagerNet/sing/blob/v0.7.0-beta.2/common/network/addr.go)
 - [Dependency review](../dependency-review.md)
+- [sing-box v1.12 typed DoH](https://github.com/SagerNet/sing-box/blob/v1.12.0/docs/configuration/dns/server/https.md)
+- [sing-box v1.12 typed DoT](https://github.com/SagerNet/sing-box/blob/v1.12.0/docs/configuration/dns/server/tls.md)
+- [sing-box v1.12 dial fields](https://github.com/SagerNet/sing-box/blob/v1.12.0/docs/configuration/shared/dial.md)
+- [sing-box v1.12 DNS route actions](https://github.com/SagerNet/sing-box/blob/v1.12.0/docs/configuration/dns/rule_action.md)
+- [sing-box v1.12 route actions](https://github.com/SagerNet/sing-box/blob/v1.12.0/docs/configuration/route/rule_action.md)
+- [sing-box v1.12 inline sets](https://github.com/SagerNet/sing-box/blob/v1.12.0/docs/configuration/rule-set/index.md)
+- [sing-box v1.12 headless rules](https://github.com/SagerNet/sing-box/blob/v1.12.0/docs/configuration/rule-set/headless-rule.md)
+- [RFC 8484](https://www.rfc-editor.org/rfc/rfc8484)

@@ -68,10 +68,10 @@ checks complete-policy FakeIP/HTTP Host/TLS SNI name precedence in a rootless
 loopback namespace. It is an explicit test-peer command, not part of ordinary
 checks or a production backend. UDP supplied-name precedence, original-name DNS
 and independent Direct refusal have ordinary regression contracts. Wire FQDN
-forwarding for complete-policy TCP Proxy with inherited DNS preserves the owned original name
+forwarding for complete-policy TCP/XUDP Proxy with inherited DNS preserves the owned original name
 without destination DNS. Only an explicit Direct domain rule resolves that name;
 its IP still needs independent authorization. Unresolved FQDNs do not match IP-only
-rules. Explicit DNS overrides retain pre-resolution. Legacy and UDP behavior remain
-unchanged. The engine's isolated peer probe
-checks TCP-domain wire forwarding separately; full packet/deployed parity remains
-unaccepted, and domain-addressed XUDP still needs a library API change.
+rules. Explicit DNS overrides retain pre-resolution. Legacy bound UDP remains
+unchanged. The isolated peer harness checks TCP-domain forwarding and the production
+XUDP route over REALITY/Vision; domain responses must retain the exact name/port.
+Full packet-netstack/TUN and deployed parity remain unaccepted.
