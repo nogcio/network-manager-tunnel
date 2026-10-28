@@ -1,14 +1,18 @@
 //! Unprivileged profile storage and explicit connection control through NetworkManager.
+mod recovery;
 mod runtime;
 mod settings;
 mod telemetry;
+mod transport;
+pub use nm_tunnel_schema::{LanBypass, ProfileChanges};
+pub use recovery::{RecoveryError, RecoveryStatus, recovery_status};
 pub use runtime::{
-    ActiveConnection, ConnectionState, SavedProfile, Snapshot, activate, deactivate, save_profile,
-    snapshot,
+    ActiveConnection, ConnectionState, SavedProfile, Snapshot, activate, deactivate,
+    delete_profile, edit_profile, replace_profile, save_profile, snapshot, update_from_source,
 };
 pub use telemetry::{TrafficCounters, TrafficSample, UsageError, UsageSnapshot, usage_snapshot};
 
-use settings::encode_profile;
+use nm_tunnel_schema::encode_profile;
 use std::time::Duration;
 
 const TIMEOUT: Duration = Duration::from_secs(20);
@@ -19,12 +23,12 @@ pub enum ClientError {
     /// System bus or NetworkManager is unavailable, or access was refused.
     #[error("NetworkManager could not be reached or access was denied.")]
     Unavailable,
-    /// NM rejected an explicit save; commonly authorization or schema validation.
-    #[error("NetworkManager rejected the profile. Check authorization and service settings.")]
+    /// NM rejected an explicit profile change; commonly authorization or validation.
+    #[error("NetworkManager rejected the profile change. Check authorization and saved settings.")]
     Rejected,
-    /// Save outcome is unknown: the remote operation may have completed.
+    /// Storage outcome is unknown: the remote operation may have completed.
     #[error(
-        "NetworkManager did not confirm the save. Check its saved profiles before retrying; the save may have completed."
+        "NetworkManager did not confirm the write. Check its saved profiles before retrying; the change may have completed."
     )]
     Timeout,
     /// The bus/NM restarted, NM lost ownership, or an object no longer has its expected identity.
@@ -40,4 +44,9 @@ pub enum ClientError {
         "NetworkManager did not confirm the connection request. Refresh its state; do not retry automatically."
     )]
     ControlTimeout,
+    /// Checked mutations require a fresh versioned snapshot; updates use Update2.
+    #[error(
+        "Profile changes require a fresh versioned NetworkManager observation (NM 1.44 or newer). Refresh before changing profiles; no unconditional fallback is allowed."
+    )]
+    UpdateUnsupported,
 }

@@ -17,6 +17,33 @@ pub(super) struct Preview {
 }
 
 pub(super) const STATES: &[&str] = &[
+    "storage-restored",
+    "storage-restored-nodes",
+    "storage-locked",
+    "storage-failed",
+    "storage-saving",
+    "storage-unknown",
+    "edit-active",
+    "profile-settings",
+    "profile-delete-waiting",
+    "subscription-unsupported",
+    "subscriptions-empty",
+    "subscription-remove",
+    "subscription-removed",
+    "subscription-updated",
+    "connections-uncertain",
+    "profile-uncertain",
+    "profile-saved",
+    "profile-saved-active",
+    "profile-delete-error",
+    "profile-deleted",
+    "subscriptions",
+    "subscription-review",
+    "subscription-settings",
+    "edit",
+    "edit-invalid",
+    "delete-profile",
+    "delete-active",
     "empty",
     "profiles",
     "long",
@@ -96,7 +123,7 @@ impl Preview {
             }
             cosmic::iced::Size::new(f32::from(width), f32::from(height))
         } else {
-            cosmic::iced::Size::new(760.0, 780.0)
+            cosmic::iced::Size::new(1024.0, 840.0)
         };
         Ok(Some(Self {
             state,
@@ -116,8 +143,12 @@ impl Preview {
     }
 
     pub(super) fn seed(&self, app: &mut App) {
+        if self.state.starts_with("storage-") {
+            app.seed_preview_storage(&self.state);
+        }
         if self.import_state() {
             app.page = Page::Import;
+            app.sources.screen = super::subscriptions::Screen::Add;
         }
         app.snapshot = Some(nm_tunnel_client::Snapshot {
             profiles: vec![],
@@ -138,7 +169,7 @@ impl Preview {
                 | "import-page-two"
                 | "import-reloading"
         ) {
-            app.source = secrecy::SecretString::from(
+            app.download.edit_source(
                 "https://subscriptions.example/v1/synthetic-preview-token-not-a-credential"
                     .to_owned(),
             );
@@ -160,23 +191,27 @@ impl Preview {
                 names[0], names[1], names[2]
             );
             if let Ok(list) = parse_subscription(body.as_bytes()) {
-                app.subscription = Some(list);
-                app.selected = Some(0);
-                app.status = "2 available, 1 unsupported. Nothing has been connected.".into();
+                app.catalog.subscription = Some(list);
+                app.download
+                    .choose_format(nm_tunnel_subscription::SubscriptionFormat::NodesOnly);
+                app.catalog.admitted = true;
+                app.catalog.selected = Some(0);
+                app.status = crate::i18n::fl!("node-counts", supported = 2, unsupported = 1);
             }
         }
         if self.state == "search" {
-            app.profile_search = "Germany".into();
+            app.catalog.search = "Germany".into();
         }
         if self.state == "loading" {
-            app.source = secrecy::SecretString::from(
-                "https://subscriptions.example/synthetic-preview".to_owned(),
-            );
-            app.fetching = true;
-            app.status = "Loading subscription…".into();
+            app.download
+                .edit_source("https://subscriptions.example/synthetic-preview".to_owned());
+            let _ = app.download.begin();
+            app.status = crate::i18n::fl!("loading-subscription");
         }
         if self.state == "error" {
-            app.status = "Could not load the subscription. Check the URL and try again.".into();
+            app.status = crate::i18n::subscription_error(
+                nm_tunnel_subscription::SubscriptionError::Download,
+            );
             app.notice = Some(Notice::Error);
         }
         if !self.import_state()
@@ -199,38 +234,44 @@ impl Preview {
             app.saved_search = "No matching profile".into();
         }
         if self.state == "import-no-matches" {
-            app.profile_search = "No matching node".into();
+            app.catalog.search = "No matching node".into();
         }
         if self.state == "import-added" {
-            app.added.insert(0, "preview-added".into());
+            app.catalog.added.insert(0, "preview-added".into());
         }
         if self.state == "import-saving" {
-            app.busy = true;
-            app.status = "Adding profile…".into();
+            app.operations.begin_add(0);
+            app.status = crate::i18n::fl!("saving-profile-status");
         }
         if self.state == "import-uncertain" {
-            app.uncertain = true;
+            app.operations.begin_add(0);
+            app.operations.finish_add(Some(ClientError::Timeout));
             app.notice = None;
-            app.status = ClientError::Timeout.to_string();
+            app.status = crate::i18n::client_error(ClientError::Timeout);
         }
         if self.state == "import-reloading" {
-            app.fetching = true;
+            let _ = app.download.begin();
         }
-        if self.state == "import-error" {
-            app.load_error = Some(nm_tunnel_subscription::SubscriptionError::Download);
+        if self.state == "import-error"
+            && let Some((ticket, _, _)) = app.download.begin()
+        {
+            let _ = app.download.finish(
+                ticket,
+                Err(nm_tunnel_subscription::SubscriptionError::Download),
+            );
         }
         if matches!(self.state.as_str(), "import-many" | "import-page-two") {
             let body = (0..49).map(|i| format!("vless://12345678-1234-4234-8234-123456789abc@proxy.example:443?security=tls&sni=www.example.com#Node%20{i:02}")).collect::<Vec<_>>().join("\n");
             if let Ok(list) = parse_subscription(body.as_bytes()) {
-                app.subscription = Some(list);
+                app.catalog.subscription = Some(list);
             }
             if self.state == "import-page-two" {
-                app.profile_page = 1;
+                app.catalog.page = 1;
             }
         }
         if self.state == "failed" {
             app.notice = Some(Notice::Error);
-            app.status = "VPN activation failed. Network protection may remain enabled.".into();
+            app.status = crate::i18n::fl!("vpn-ended-status");
             if let Some(data) = &mut app.traffic.snapshot {
                 data.live = false;
                 data.state = "failed".into();
@@ -286,6 +327,103 @@ impl Preview {
                 _ => {}
             }
         }
+        if self.import_state() && app.catalog.subscription.is_some() {
+            app.seed_preview_source();
+        }
+        if matches!(
+            self.state.as_str(),
+            "subscriptions"
+                | "subscription-review"
+                | "subscription-settings"
+                | "subscription-remove"
+                | "subscription-updated"
+                | "subscription-unsupported"
+        ) {
+            app.page = Page::Import;
+            let body = "vless://12345678-1234-4234-8234-123456789abc@proxy.example:443?security=tls&sni=peer.example#North";
+            if let Ok(list) = parse_subscription(body.as_bytes()) {
+                app.catalog.admit(list);
+            }
+            app.seed_preview_source();
+            if self.state == "subscriptions" {
+                app.sources.screen = super::subscriptions::Screen::List;
+            }
+            let updated = "vless://12345678-1234-4234-8234-123456789abc@updated.example:443?security=tls&sni=peer.example#North\nvless://12345678-1234-4234-8234-123456789abd@south.example:443?security=tls&sni=peer.example#South";
+            if self.state == "subscription-review"
+                && let Ok(candidate) = parse_subscription(updated.as_bytes())
+            {
+                app.source_downloaded(Ok(candidate));
+            }
+            if self.state == "subscription-settings" {
+                let _ = app.subscription_update(super::subscriptions::Action::Settings);
+            }
+            if self.state == "subscription-remove" {
+                app.sources.screen = super::subscriptions::Screen::List;
+                let _ = app.subscription_update(super::subscriptions::Action::AskRemove);
+            }
+            if self.state == "subscription-unsupported" {
+                app.source_downloaded(Err(
+                    nm_tunnel_subscription::SubscriptionError::UnsupportedPolicy(
+                        nm_tunnel_subscription::PolicyIssue::Configuration,
+                    ),
+                ));
+            }
+            if self.state == "subscription-updated" {
+                if let Ok(candidate) = parse_subscription(updated.as_bytes()) {
+                    app.catalog.admit(candidate);
+                }
+                app.notice = Some(Notice::Info);
+                app.status = crate::i18n::fl!("subscription-updated-status");
+            }
+        }
+        if matches!(
+            self.state.as_str(),
+            "subscriptions-empty" | "subscription-removed"
+        ) {
+            app.page = Page::Import;
+            if self.state == "subscription-removed" {
+                app.notice = Some(Notice::Info);
+                app.status = crate::i18n::fl!("subscription-removed-status");
+            }
+        }
+        if matches!(
+            self.state.as_str(),
+            "connections-uncertain" | "profile-uncertain"
+        ) {
+            app.operations.begin_add(0);
+            app.operations.finish_add(Some(ClientError::Timeout));
+        }
+        if matches!(
+            self.state.as_str(),
+            "profile-uncertain" | "profile-saved" | "profile-saved-active" | "profile-settings"
+        ) {
+            app.details = Some(Details::Profile("preview-a".into()));
+            app.core.set_show_context(true);
+            if matches!(
+                self.state.as_str(),
+                "profile-saved" | "profile-saved-active"
+            ) {
+                app.notice = Some(Notice::Info);
+                app.status = crate::i18n::fl!("profile-settings-saved-status");
+            }
+        }
+        if self.state == "profile-delete-error" {
+            app.notice = Some(Notice::Error);
+            app.status = crate::i18n::fl!("delete-disconnection-timeout");
+        }
+        if self.state == "profile-delete-waiting" {
+            let _ = app.operations.begin_storage();
+            app.status = crate::i18n::fl!("waiting-disconnection-status");
+        }
+        if self.state == "profile-deleted" {
+            app.notice = Some(Notice::Info);
+            app.status = crate::i18n::fl!("profile-deleted-status");
+        }
+        if matches!(self.state.as_str(), "edit" | "edit-invalid" | "edit-active") {
+            app.editor = Some(super::profile_editor::Editor::preview(
+                self.state == "edit-invalid",
+            ));
+        }
     }
 
     fn import_state(&self) -> bool {
@@ -299,8 +437,18 @@ impl Preview {
     pub(super) fn active_count(&self) -> usize {
         match self.state.as_str() {
             "multiple" => 2,
-            "connected" | "traffic" | "details" | "details-stale" | "connecting"
-            | "disconnecting" | "unknown" | "profile-details" => 1,
+            "connected"
+            | "traffic"
+            | "details"
+            | "details-stale"
+            | "connecting"
+            | "disconnecting"
+            | "unknown"
+            | "profile-details"
+            | "delete-active"
+            | "profile-saved-active"
+            | "profile-delete-error" => 1,
+            "profile-delete-waiting" | "edit-active" => 1,
             s if s.starts_with("usage-") => 1,
             _ => 0,
         }
@@ -310,28 +458,29 @@ impl Preview {
         self.active_count() == 1 && self.state != "disconnecting"
     }
 
-    pub(super) fn connection_title(&self) -> &'static str {
+    pub(super) fn connection_title(&self) -> String {
         match self.state.as_str() {
-            "nm-unavailable" => "NetworkManager unavailable",
-            "connecting" => "Connecting…",
-            "disconnecting" => "Disconnecting…",
-            "unknown" => "Unknown connection state",
-            "multiple" => "Multiple VPN connections",
-            _ if self.active_count() == 1 => "Connected",
-            _ => "Disconnected",
+            "nm-unavailable" => crate::i18n::fl!("nm-unavailable"),
+            "connecting" => crate::i18n::fl!("connecting"),
+            "disconnecting" | "profile-delete-waiting" => crate::i18n::fl!("disconnecting"),
+            "unknown" => crate::i18n::fl!("unknown-connection-state"),
+            "multiple" => crate::i18n::fl!("multiple-connections"),
+            _ if self.active_count() == 1 => crate::i18n::fl!("connected"),
+            _ => crate::i18n::fl!("disconnected"),
         }
     }
 
-    pub(super) fn connection_hint(&self) -> &'static str {
+    pub(super) fn connection_hint(&self) -> String {
         match self.state.as_str() {
-            "nm-unavailable" => "Could not read NetworkManager state.",
-            "backend-missing" => "VPN backend unavailable",
+            "nm-unavailable" => crate::i18n::fl!("nm-read-failed"),
+            "backend-missing" => crate::i18n::fl!("backend-unavailable"),
             "saved-long" => {
                 "A synthetic profile with a deliberately long name for responsive layout review"
+                    .into()
             }
-            "multiple" => "Two active connections",
-            _ if self.active_count() == 1 => "North · Amsterdam",
-            _ => "",
+            "multiple" => crate::i18n::fl!("manage-in-nm"),
+            _ if self.active_count() == 1 => "North · Amsterdam".into(),
+            _ => String::new(),
         }
     }
 
@@ -344,12 +493,12 @@ impl Preview {
         }
         let state = match self.state.as_str() {
             "connecting" => Some(ConnectionState::Connecting),
-            "disconnecting" => Some(ConnectionState::Disconnecting),
+            "disconnecting" | "profile-delete-waiting" => Some(ConnectionState::Disconnecting),
             "unknown" => Some(ConnectionState::Unknown),
             _ if self.active_count() > 0 => Some(ConnectionState::Connected),
             _ => None,
         };
-        Some(vec![
+        let mut rows = vec![
             ProfileRow {
                 id: "preview-a",
                 name: if self.state == "saved-long" {
@@ -358,21 +507,43 @@ impl Preview {
                     "North · Amsterdam"
                 },
                 persistent: true,
+                dns_override: nm_tunnel_profile::DnsOverride::Inherit,
+                lan_bypass: false,
+                private_lan_bypass: false,
+                dns_interception: false,
+                fake_ip: false,
+                source_policy: false,
                 state,
             },
             ProfileRow {
                 id: "preview-b",
                 name: "West · Frankfurt",
                 persistent: false,
+                dns_override: nm_tunnel_profile::DnsOverride::CurrentNetwork,
+                lan_bypass: true,
+                private_lan_bypass: false,
+                dns_interception: false,
+                fake_ip: false,
+                source_policy: false,
                 state: (self.state == "multiple").then_some(ConnectionState::Connected),
             },
             ProfileRow {
                 id: "preview-c",
                 name: "Coast · Helsinki",
                 persistent: true,
+                dns_override: nm_tunnel_profile::DnsOverride::Inherit,
+                lan_bypass: false,
+                private_lan_bypass: false,
+                dns_interception: true,
+                fake_ip: true,
+                source_policy: false,
                 state: None,
             },
-        ])
+        ];
+        if self.state == "profile-deleted" {
+            rows.retain(|row| row.id != "preview-a");
+        }
+        Some(rows)
     }
 
     pub(super) fn needs_capture(&self) -> bool {
@@ -381,26 +552,85 @@ impl Preview {
     pub(super) fn size(&self) -> cosmic::iced::Size {
         self.size
     }
+    pub(super) fn dialog(&self) -> Option<cosmic::Element<'static, Message>> {
+        matches!(self.state.as_str(), "delete-profile" | "delete-active").then(|| {
+            super::profile_editor::delete_confirmation("North · TCP", self.state == "delete-active")
+        })
+    }
 }
 
 pub(super) fn update(app: &mut App, message: Message) -> Task<Message> {
     match message {
+        Message::Source(value)
+            if app.sources.screen == super::subscriptions::Screen::Add
+                && !app.operations.busy()
+                && app.download.pending().is_none() =>
+        {
+            if app.download.edit_source(value) {
+                app.catalog.invalidate();
+            }
+        }
+        Message::FetchComplete(complete)
+            if app.sources.screen == super::subscriptions::Screen::Add
+                && !app.operations.busy()
+                && app.download.pending().is_none() =>
+        {
+            let format = if complete {
+                nm_tunnel_subscription::SubscriptionFormat::Complete
+            } else {
+                nm_tunnel_subscription::SubscriptionFormat::NodesOnly
+            };
+            if app.download.choose_format(format) {
+                app.catalog.invalidate();
+            }
+        }
+        Message::Profile(
+            action @ (super::profile_editor::Action::Name(_)
+            | super::profile_editor::Action::Dns(_)
+            | super::profile_editor::Action::Manual(_)
+            | super::profile_editor::Action::Lan(_)
+            | super::profile_editor::Action::Intercept(_)
+            | super::profile_editor::Action::FakeIp(_)
+            | super::profile_editor::Action::Cancel),
+        ) => return app.profile_update(action),
+        Message::Subscription(
+            action @ (super::subscriptions::Action::Scrolled(..)
+            | super::subscriptions::Action::New
+            | super::subscriptions::Action::Back
+            | super::subscriptions::Action::Open(_)
+            | super::subscriptions::Action::Name(_)
+            | super::subscriptions::Action::Settings
+            | super::subscriptions::Action::CloseSettings
+            | super::subscriptions::Action::Rename(_)
+            | super::subscriptions::Action::Url(_)
+            | super::subscriptions::Action::AskRemove
+            | super::subscriptions::Action::CancelRemove
+            | super::subscriptions::Action::Remove
+            | super::subscriptions::Action::CancelReview
+            | super::subscriptions::Action::Map(_, _)),
+        ) => return app.subscription_update(action),
         Message::Navigate(page) => {
+            app.editor = None;
+            app.sources.settings = false;
             app.page = page;
+            app.navigation.select(page);
             app.details = None;
             app.core.set_show_context(false);
+            return app.restore_page_scroll();
         }
+        Message::PageScrolled(page, offset) => app.navigation.remember_scroll(page, offset),
         Message::CloseDetails => {
             app.details = None;
             app.core.set_show_context(false);
+            return app.restore_page_scroll();
         }
-        Message::ShowDetails(_) => {
-            app.details = Some(Details::Connection);
+        Message::ShowDetails(profile) => {
+            app.sources.settings = false;
+            app.details = Some(profile.map_or(Details::Connection, Details::Profile));
             app.core.set_show_context(true);
         }
         Message::SearchProfiles(value) => {
-            app.profile_search = value.chars().take(128).collect();
-            app.profile_page = 0;
+            app.catalog.search(value);
         }
         Message::SearchSaved(value) => app.saved_search = value.chars().take(128).collect(),
         Message::Frame(id) if app.core.main_window_id() == Some(id) => {
@@ -462,7 +692,13 @@ pub(super) fn update(app: &mut App, message: Message) -> Task<Message> {
                         std::process::exit(1);
                     }
                 }
-                return cosmic::iced::exit();
+                // Follow the native window lifecycle so the compositor releases
+                // its surface/renderer before the event loop exits. Do not bypass
+                // renderer teardown with process::exit after producing a PNG.
+                return app
+                    .core
+                    .main_window_id()
+                    .map_or_else(cosmic::iced::exit, cosmic::iced::window::close);
             }
         }
         // Synthetic previews never execute HTTP or NetworkManager actions.
@@ -500,5 +736,142 @@ pub(super) fn usage_sample() -> nm_tunnel_client::UsageSnapshot {
                 upload_bytes_per_second: 200_000 + (i * 17_333 % 700_000),
             })
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cosmic::Application;
+
+    #[test]
+    fn every_synthetic_scene_builds_without_actionable_handles_or_dispatched_reads() {
+        for state in STATES {
+            let preview = Preview {
+                state: (*state).into(),
+                capture: None,
+                requested: false,
+                frames_seen: 0,
+                scroll_bottom: false,
+                size: cosmic::iced::Size::new(1024.0, 840.0),
+                theme: cosmic::Theme::dark(),
+            };
+            let (app, _) = App::init(
+                cosmic::Core::default(),
+                super::super::Flags {
+                    preview: Some(preview),
+                },
+            );
+            let _ = app.view();
+            let _ = app.context_drawer();
+            let _ = app.dialog();
+            assert!(
+                app.snapshot.as_ref().is_none_or(
+                    |snapshot| snapshot.profiles.is_empty() && snapshot.active.is_empty()
+                ) && app.saved_selected.is_none(),
+                "{state}"
+            );
+            assert!(app.reads.nm.pending().is_none(), "{state}");
+            assert!(
+                app.profile_save.is_none() && app.deletion.is_none(),
+                "{state}"
+            );
+        }
+    }
+
+    #[test]
+    fn primary_chart_requires_one_observed_connected_profile_not_a_live_old_backend_sample() {
+        for state in [
+            "connected",
+            "connecting",
+            "disconnecting",
+            "unknown",
+            "multiple",
+            "saved",
+        ] {
+            let preview = Preview {
+                state: state.into(),
+                capture: None,
+                requested: false,
+                frames_seen: 0,
+                scroll_bottom: false,
+                size: cosmic::iced::Size::new(1024.0, 840.0),
+                theme: cosmic::Theme::dark(),
+            };
+            let (app, _) = App::init(
+                cosmic::Core::default(),
+                super::super::Flags {
+                    preview: Some(preview),
+                },
+            );
+            assert_eq!(app.show_traffic_chart(), state == "connected", "{state}");
+            assert!(
+                app.traffic
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|sample| sample.available)
+            );
+        }
+    }
+
+    #[test]
+    fn synthetic_profile_and_source_actions_never_dispatch_nm_or_http_even_after_url_edits() {
+        let preview = Preview {
+            state: "subscription-settings".into(),
+            capture: None,
+            requested: false,
+            frames_seen: 0,
+            scroll_bottom: false,
+            size: cosmic::iced::Size::new(1024.0, 840.0),
+            theme: cosmic::Theme::dark(),
+        };
+        let (mut app, _) = App::init(
+            cosmic::Core::default(),
+            super::super::Flags {
+                preview: Some(preview),
+            },
+        );
+        let _ = app.update(Message::Subscription(
+            super::super::subscriptions::Action::Url(
+                "https://changed.example/synthetic-token".into(),
+            ),
+        ));
+        for message in [
+            Message::Subscription(super::super::subscriptions::Action::Add),
+            Message::Load,
+            Message::Subscription(super::super::subscriptions::Action::SaveSettings),
+            Message::Subscription(super::super::subscriptions::Action::Update),
+            Message::Subscription(super::super::subscriptions::Action::Apply),
+            Message::Profile(super::super::profile_editor::Action::Save),
+            Message::Profile(super::super::profile_editor::Action::ConfirmDelete),
+            Message::Connect,
+            Message::Disconnect,
+            Message::Poll,
+            Message::Tick,
+        ] {
+            let _ = app.update(message);
+            assert!(app.download.pending().is_none());
+            assert!(!app.operations.busy());
+            assert!(app.operations.control().is_none());
+            assert!(app.profile_save.is_none() && app.deletion.is_none());
+            assert!(app.reads.nm.pending().is_none());
+        }
+        let _ = app.update(Message::Subscription(
+            super::super::subscriptions::Action::New,
+        ));
+        let source = "https://subscriptions.example/synthetic-native-lab";
+        let _ = app.update(Message::Source(source.into()));
+        assert_eq!(
+            secrecy::ExposeSecret::expose_secret(app.download.source()),
+            source
+        );
+        let _ = app.update(Message::FetchComplete(false));
+        assert_eq!(
+            app.download.format(),
+            nm_tunnel_subscription::SubscriptionFormat::NodesOnly
+        );
+        let _ = app.update(Message::Load);
+        assert!(app.download.pending().is_none() && !app.operations.busy());
+        assert!(app.reads.nm.pending().is_none());
     }
 }

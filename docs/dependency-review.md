@@ -15,6 +15,99 @@ inventory or a legal certification.
 
 ## Maintenance and native cost
 
+COSMIC localization directly consumes the already locked crates.io `i18n-embed`
+0.16.0 (`fluent-system`, `desktop-requester`, default `rust-embed`), `i18n-embed-fl`
+0.10.1 and `rust-embed` 8.13.0, all MIT. The actual consumer is embedded en/ru UI
+resources, desktop locale negotiation and compile-time message/argument validation.
+These are the pinned libcosmic graph's existing maintained localization families;
+no new runtime source package, linked native library, external translation service,
+root process or persistent settings store is introduced. Existing `fluent-syntax`
+0.12.0 (Apache-2.0 OR MIT) is a direct dev-only consumer for catalog syntax, unique
+IDs and named-argument parity, rather than an application-written Fluent parser.
+Cargo.lock is authoritative for their exact resolved sources/checksums; the standard
+locked advisory/license/source audit remains required.
+
+The COSMIC source persistence consumer uses crates.io `secret-service =5.2.0`,
+defaults disabled, with `rt-tokio-crypto-rust` (`rt-tokio` and `crypto-rust`). It is
+MIT OR Apache-2.0; the published archive checksum is
+`5107b24b91445dd2aa449a258a1807b63240942157292354dc5bfdbeb8bc6db8`.
+Versioned upstream source is [secret-service-rs v5.2.0][secret-service-source],
+published 2026-08-29. This maintained Secret Service client owns DH/AES session
+cryptography and desktop prompts; application code does not implement either.
+The real consumer is restoring/saving bounded subscription metadata and secret
+URLs under [ADR 0028](decisions/0028-subscription-url-secret-service.md), not VPN
+credential migration or a new profile database. Native keyring/prompt acceptance
+and the standard vulnerability/license audit remain required; encrypted D-Bus
+transport does not isolate secrets from other processes of the same user.
+At-rest encryption and locking are supplied by the provider, not certified by
+the Secret Service API or this wrapper.
+
+The resolution adds secret-service and its RustCrypto/math families: aes 0.9.3,
+cbc 0.2.1, cipher 0.5.2, block-padding 0.4.2, inout 0.2.5, cpubits 0.1.1,
+cmov 0.5.4, ctutils 0.4.6, hkdf/hmac 0.13.0 and num 0.4.3 with num-bigint 0.4.8,
+num-complex 0.4.6, num-integer 0.1.47, num-iter 0.1.46 and num-rational 0.4.2.
+Cargo.lock owns the complete resolved graph. This selection adds no OpenSSL,
+libsecret, new linked native library, root service or capability. It requires an
+existing desktop Secret Service provider at runtime; unavailable/locked storage
+is explicit, never a plaintext fallback. Existing zbus feature unification remains.
+
+Persistence also directly consumes the already locked crates.io serde 1.0.229
+(`derive`), serde_json 1.0.154 (`std`), Tokio 1.54.1 (workspace runtime/time),
+uuid 1.29.0 (workspace `v4`) and rustix 1.1.5 (`fs`, `process`), all MIT OR Apache-2.0.
+They own bounded JSON, async deadlines, independent test IDs/UUID parsing and safe
+descriptor-relative no-symlink/single-writer locking. These direct edges add no
+new source, native library or privileged operation. Tests use synthetic roots and
+never access the owner's keyring.
+
+[secret-service-source]: https://github.com/hwchen/secret-service-rs/tree/v5.2.0
+
+The workspace-local `nm-tunnel-schema` package (MIT OR Apache-2.0) has two production
+consumers: the NM client and service. It consolidates existing conversion/admission
+code using the existing locked workspace `nm-tunnel-profile`, `secrecy`, `uuid` and
+`zbus` dependencies, with unchanged workspace features. It adds no external source,
+resolved external package, native library or runtime service. Cargo.lock continues
+to own exact resolutions; the existing maintenance/security/license review applies.
+The `contract` layer permits model dependencies, not engine, client or service I/O.
+
+The workspace-local `nm-tunnel-dataplane` package (MIT OR Apache-2.0) is a real
+consumer of extracted service packet/flow, DNS and FakeIP code, not a speculative
+platform framework. Its production consumer is `nm-service`; the existing `engine`
+layer admits only model/engine workspace edges. It reuses the existing crates.io
+async-trait 0.1.92 (MIT OR Apache-2.0), futures-util 0.3.34 (`sink`, MIT OR Apache-2.0),
+hickory-proto 0.26.3 (defaults off, `std`, MIT OR Apache-2.0), tokio-util 0.7.20
+(`codec`, MIT), serde_json 1.0.154 (default `std`, MIT OR Apache-2.0), uuid 1.29.0
+(workspace `v4`, MIT OR Apache-2.0) and Tokio 1.54.1 (workspace runtime/time plus
+`io-util`, `sync`, MIT OR Apache-2.0). These move or share existing direct edges;
+the service additionally consumes async-trait for the concrete capability adapters.
+The same maintained dependency families and locked advisory/license review apply.
+
+meow-dns and meow-lwip 0.26.1 move from the service into the data plane at the
+unchanged nogcio revision `fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21`;
+meow-dns defaults stay disabled, lwIP keeps its existing features. Their exact source,
+license evidence and native cost are described below. The data plane also consumes
+the workspace protocol engine with unchanged features. No external version/source,
+linked native library, capability, FFI exception or daemon is added. The existing
+lwIP C/bindgen and protocol-engine BoringSSL build cost now applies to data-plane-only
+builds too. This extraction adds no cross-build or platform acceptance claim; see
+[ADR 0029](decisions/0029-shared-dataplane.md).
+
+Typed executable profiles reuse the existing locked `secrecy` container and `uuid`/
+`base64` parsing in the model. The engine drops its direct dependencies on those
+three crates; no external source, feature, native library or resolution is added.
+The automatic guard-recovery owner reuses the service binary and existing zbus,
+Tokio, serde_json, nftables and systemd runtime dependencies. It adds one D-Bus-activated
+root service, bounded to CAP_NET_ADMIN and Unix/netlink sockets, in an independent
+cgroup; this is a deliberate lifecycle/privilege addition, not a free abstraction.
+There is no new protocol, profile store or external daemon dependency. Its deployed
+restart/confinement and packet behavior require review/acceptance under ADR 0026.
+Its watchdog additionally consumes the existing rustix 1.1.5 `process` pidfd signaling
+and async-io 2.6.0 safe descriptor-readiness APIs (exact versions/sources remain in
+Cargo.lock). No external source, feature, resolution, native library or capability
+is added. D-Bus must supply `ProcessFD`; unsupported buses reject before guard changes.
+Process-pinned termination expands root helper authority and requires owner review,
+even with unchanged capability bounding. `GetStatus` adds a narrowly scoped read-only
+system-bus permission, not ordinary-user cleanup/control access.
+
 The reviewed graph has maintenance advisories in the UI's build-time localization,
 font/rendering and zbus 5 dependency families, including foreign-target entries.
 They are not presented as demonstrated exploitable vulnerabilities. The NM client
@@ -29,6 +122,50 @@ there is no new package resolution, native library or runtime service. Source an
 resolved versions remain in Cargo.lock; maintenance/security use the standard audit.
 The graph uses libcosmic's already-enabled canvas, not a new plotting dependency.
 
+The profile model additionally consumes the existing locked crates.io `serde`
+1.0.229 (`std`, `derive`) and `serde_json` 1.0.154 (`std`), both MIT OR Apache-2.0,
+for its bounded, versioned TCP policy. Unknown fields/duplicate known fields and
+unsupported actions are rejected, and parser diagnostics are sanitized. These
+established maintained serialization libraries already serve NM-service IPC; this
+adds no resolved package, native library or runtime service. Security/maintenance
+remain subject to the normal dependency audit, not inferred from parser tests.
+TCP inspection uses the existing pinned `meow-common` HTTP/TLS parsers, not a new
+parser dependency or copied sing-box source.
+
+The subscription client also directly consumes these same locked serde/serde_json
+versions/features for full-envelope admission and static rejection diagnostics.
+This is a real consumer before profile extraction, not a new protocol engine or
+foreign configuration executor. JSON syntax/top-level structure is bounded and
+checked recursively; only the supported native policy is returned for explicit NM
+saves. Foreign listener creation, cache-file access and secondary downloads remain
+excluded. This serialization consumer introduces no new package/native cost.
+
+The integration layer directly consumes crates.io `tokio-util` 0.7.20 (`codec`,
+empty default feature set), MIT, already in Cargo.lock, for bounded DNS-over-TCP framing.
+The existing hickory-proto 0.26.3 (`std`, MIT OR Apache-2.0) parses DNS. This maintained
+Tokio utility stack is a real resolver-relay consumer, not a new daemon/protocol
+implementation. `codec` adds an edge to the already locked libc 0.2.191; no new
+package or native library is resolved. Standard audits still
+apply. Destination TLS readiness reuses pinned meow transport with certificate
+verification explicitly enabled, without a new dependency or implicit dialer.
+
+Connected-LAN route planning directly consumes crates.io ipnet 2.12.2 (`std`,
+default features disabled), MIT OR Apache-2.0, already locked transitively. Its real
+consumer is CIDR aggregation and complement summarization for NM's route report;
+it does not install routes. This maintained address utility adds no new package or
+native cost. Standard vulnerability/license/maintenance checks still apply; see
+[ADR 0012](decisions/0012-connected-lan-bypass.md) for privilege and policy bounds.
+
+Durable FakeIP directly consumes the already locked `meow-dns` 0.26.1 at
+`fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21`, with default features disabled. Its
+workspace license is MIT OR Apache-2.0; the same maintained fork/source evidence
+below applies. Pool/MemoryStore are real bounded allocator consumers, not a network
+resolver daemon. Existing graph feature unification still applies, but this adds
+no new resolved package/native library. The adapter uses opaque IDs to keep private
+names out of allocator tracing and supplies strict journal durability rather than
+FileStore's best-effort semantics. Normal security/license audits remain required;
+see [ADR 0016](decisions/0016-persistent-ipv4-fakeip.md).
+
 The engine uses the maintained [meow fork](decisions/0004-maintained-meow-fork.md)
 as libraries, not its application or route manager. REALITY enables `boring/mlkem`;
 BoringSSL needs CMake, Clang/libclang and a C/C++ toolchain. The experimental runtime
@@ -39,6 +176,36 @@ a dependency. Runtime ownership and limits live in
 [service contract](../crates/nm-service/README.md).
 
 ## Original Git license evidence
+
+### Complete-policy dependency additions
+
+The QUIC hostname adapter consumes crates.io `quic-parser =0.1.5`, defaults off,
+`ring` enabled (MIT), archive SHA-256
+`528d91b77f6062ecd2cff9d27b9b39fa3e14447260b076b761358d95ff174a39`.
+Reviewed `src/{header,crypto,frame,varint}.rs` own parsing, v1/v2 Initial crypto
+and CRYPTO reassembly; our adapter bounds packets/fragments/bytes and passes the
+result to the pinned TLS sniffer. This is a small, recent single-maintainer crate,
+not a mature full QUIC stack; upstream maintenance and malformed-input behavior
+require continued review. It adds no daemon or socket authority. `ring` 0.17.14
+already exists in the graph; enabling this engine edge adds native ring compilation
+to engine-only builds, using the existing C/assembler toolchain, not another TLS
+backend/service. The public fixture's separate BSD notice is retained in
+[engine fixtures](../crates/engine/tests/fixtures/README.md).
+
+The pinned meow revision remains `fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21`;
+`meow-proxy` additionally enables `mux` for one-association CommandMux/Mux.Cool
+XUDP, not arbitrary source multiplexing or a connection pool. Feature unification
+also compiles h2mux/yamux/smux modules. New crates.io resolutions are `h2` 0.4.20
+(MIT), `yamux` 0.14.1 (Apache-2.0 OR MIT), and `nohash-hasher` 0.2.0
+(Apache-2.0 OR MIT). These Rust-only libraries add compile/runtime surface but no
+new native library. Yamux/h2 are established upstream projects; the small stable
+hash utility has a lower activity cadence. This feature cost buys the real XUDP
+consumer without handwritten VLESS framing or a production external proxy core.
+Library source review and the isolated pinned-peer probe cover that adapter path,
+not all newly compiled mux protocols. The locked dependency audit passes with
+visible maintenance/duplicate warnings; no advisory/license exception was added.
+Root source-DNS use expands privileged protocol execution and requires separate
+owner review; see [ADR 0020](decisions/0020-native-ipv4-source-policy.md).
 
 These are inspection snapshots, not an independently maintained inventory of
 current resolutions or a commit allowlist. Reinspect affected evidence when

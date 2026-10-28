@@ -1,0 +1,28 @@
+[Unit]
+Description=Reserve NetworkManager Tunnel FakeIP addresses before networking
+DefaultDependencies=no
+After=local-fs.target nftables.service
+Before=network-pre.target NetworkManager.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+User=root
+Environment=XDG_STATE_HOME=/var/lib
+ExecStart=/usr/libexec/nm-tunnel-service --restore-fakeip-guard
+RemainAfterExit=yes
+TimeoutStartSec=10s
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+
+[Install]
+WantedBy=multi-user.target

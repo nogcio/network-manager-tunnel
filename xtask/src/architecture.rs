@@ -3,6 +3,7 @@ use cargo_metadata::{DependencyKind, Metadata, MetadataCommand};
 
 const LAYERS: &[&str] = &[
     "model",
+    "contract",
     "engine",
     "integration",
     "client",
@@ -13,9 +14,10 @@ const LAYERS: &[&str] = &[
 fn allowed(from: &str, to: &str) -> bool {
     match from {
         "model" => to == "model",
+        "contract" => matches!(to, "model" | "contract"),
         "engine" => matches!(to, "model" | "engine"),
-        "integration" => matches!(to, "model" | "engine" | "integration"),
-        "client" => matches!(to, "model" | "client"),
+        "integration" => matches!(to, "model" | "contract" | "engine" | "integration"),
+        "client" => matches!(to, "model" | "contract" | "client"),
         "frontend" => matches!(to, "model" | "client" | "frontend"),
         "tooling" => LAYERS.contains(&to),
         _ => false,

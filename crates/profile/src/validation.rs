@@ -32,6 +32,8 @@ pub enum Field {
     WebSocketHost,
     /// Imported share link.
     Link,
+    /// Explicit resolver selection.
+    Dns,
 }
 
 /// Safe-to-display error: never includes supplied values or third-party parse errors.
@@ -61,10 +63,76 @@ pub(crate) fn hostname(value: &str) -> bool {
 }
 
 impl Draft {
+    /// Validate only network-policy combinations, without credentials, I/O or mutation.
+    /// Used by non-secret NM metadata observation as well as full validation.
+    pub fn validate_policy(&self) -> Result<(), Vec<ValidationError>> {
+        let mut errors = Vec::new();
+        let mut require = |ok: bool, field, message| {
+            if !ok {
+                errors.push(ValidationError::new(field, message));
+            }
+        };
+        require(
+            self.dns_override.validate().is_ok(),
+            Field::Dns,
+            "Choose the current network DNS or a public IPv4 DNS server through the VPN.",
+        );
+        require(
+            !self.fake_ip || self.dns_interception,
+            Field::Dns,
+            "IPv4 FakeIP requires explicit DNS interception; it cannot bypass domain ownership.",
+        );
+        require(
+            self.source_policy.is_none()
+                || (self.fake_ip
+                    && self.dns_interception
+                    && self.tcp_domain_policy.is_none()
+                    && !self.lan_bypass
+                    && !self.private_lan_bypass),
+            Field::Dns,
+            "Complete IPv4 policy requires FakeIP/interception and cannot be combined with legacy LAN or TCP-only routing.",
+        );
+        require(
+            !(self.lan_bypass && self.private_lan_bypass),
+            Field::Dns,
+            "Choose connected-only or all-RFC1918 bypass, not both.",
+        );
+        require(
+            !self.private_lan_bypass || self.tcp_domain_policy.is_none(),
+            Field::Dns,
+            "All-RFC1918 bypass cannot combine with legacy hostname routing; use a checked ordered source policy instead.",
+        );
+        require(
+            !matches!(self.dns_override, crate::DnsOverride::ProxyIpv4(_))
+                || !self
+                    .tcp_domain_policy
+                    .as_ref()
+                    .is_some_and(|policy| policy.has_direct()),
+            Field::Dns,
+            "Direct hostname rules cannot yet use a manual through-VPN resolver; choose current network DNS instead.",
+        );
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+
     /// Validate a snapshot without DNS, I/O or credential logging.
     /// Unsupported modes and malformed fields fail rather than downgrade.
     pub fn validate(&self) -> Result<Profile, Vec<ValidationError>> {
-        let mut errors = Vec::new();
+        self.validate_fields(true)?;
+        Profile::from_validated(self.clone()).map_err(|error| vec![error])
+    }
+
+    /// Validate non-secret configuration independently of credential availability.
+    /// Success is not an executable profile and cannot be passed to the engine.
+    pub fn validate_configuration(&self) -> Result<(), Vec<ValidationError>> {
+        self.validate_fields(false)
+    }
+
+    fn validate_fields(&self, credentials: bool) -> Result<(), Vec<ValidationError>> {
+        let mut errors = self.validate_policy().err().unwrap_or_default();
         let mut require = |ok: bool, field, message| {
             if !ok {
                 errors.push(ValidationError::new(field, message));
@@ -83,15 +151,30 @@ impl Draft {
             "Enter an ASCII server hostname or IP address, without URL encoding, scheme or port.",
         );
         require(
+            !matches!(
+                self.server.parse::<std::net::IpAddr>(),
+                Ok(std::net::IpAddr::V6(_))
+            ),
+            Field::Server,
+            "IPv6 endpoints are unsupported in this IPv4-only version; use an IPv4 address or a hostname with an A record.",
+        );
+        require(
+            !matches!(self.server.parse::<std::net::Ipv4Addr>(), Ok(ip)
+            if ip.is_unspecified() || ip.is_multicast() || ip.is_broadcast()),
+            Field::Server,
+            "The VPN endpoint must be a concrete unicast IPv4 address or a hostname with an A record.",
+        );
+        require(
             self.port.parse::<u16>().is_ok_and(|port| port != 0)
                 && self.port.bytes().all(|byte| byte.is_ascii_digit()),
             Field::Port,
             "Enter a port between 1 and 65535.",
         );
         require(
-            self.credential.expose_secret().len() == 36
-                && uuid::Uuid::parse_str(self.credential.expose_secret())
-                    .is_ok_and(|id| !id.is_nil()),
+            !credentials
+                || (self.credential.expose_secret().len() == 36
+                    && uuid::Uuid::parse_str(self.credential.expose_secret())
+                        .is_ok_and(|id| !id.is_nil())),
             Field::Credential,
             "Enter a non-zero VLESS UUID.",
         );
@@ -101,10 +184,11 @@ impl Draft {
             "Enter an ASCII TLS hostname (SNI), without URL encoding, not an IP address or URL.",
         );
         require(
-            matches!(
-                self.fingerprint.as_str(),
-                "chrome" | "firefox" | "safari" | "ios" | "android" | "edge"
-            ),
+            (self.security == Security::Tls && self.fingerprint == "native")
+                || matches!(
+                    self.fingerprint.as_str(),
+                    "chrome" | "firefox" | "safari" | "ios" | "android" | "edge"
+                ),
             Field::Fingerprint,
             "Choose a supported browser fingerprint.",
         );
@@ -171,7 +255,7 @@ impl Draft {
             "ALPN supports h2 and http/1.1, separated by a comma.",
         );
         if errors.is_empty() {
-            Ok(Profile(self.clone()))
+            Ok(())
         } else {
             Err(errors)
         }

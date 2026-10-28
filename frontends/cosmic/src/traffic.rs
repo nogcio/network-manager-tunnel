@@ -1,5 +1,6 @@
 //! Independent, read-only usage observation and a theme-owned sixty-second chart.
 use super::{App, Message};
+use crate::i18n::fl;
 use cosmic::{
     Element,
     app::Task,
@@ -12,7 +13,6 @@ use std::time::Instant;
 
 #[derive(Default)]
 pub(super) struct Traffic {
-    pub pending: bool,
     pub snapshot: Option<UsageSnapshot>,
     received: Option<Instant>,
     error: Option<UsageError>,
@@ -41,16 +41,16 @@ impl Traffic {
 
     pub fn freshness(&self) -> String {
         match &self.snapshot {
-            Some(s) if !s.available => "Waiting for worker statistics".into(),
-            Some(_) if self.live() => "Updated just now".into(),
-            Some(s) => format!(
-                "Last sample {}s ago · not live",
-                s.age_ms.saturating_add(self.elapsed()) / 1000
+            Some(s) if !s.available => fl!("waiting-statistics"),
+            Some(_) if self.live() => fl!("updated-just-now"),
+            Some(s) => fl!(
+                "sample-not-live",
+                seconds = s.age_ms.saturating_add(self.elapsed()) / 1000
             ),
-            None if !self.queried => "Checking backend statistics…".into(),
+            None if !self.queried => fl!("checking-statistics"),
             None => self
                 .error
-                .map_or("Backend is not running".into(), |e| e.to_string()),
+                .map_or_else(|| fl!("backend-not-running"), crate::i18n::usage_error),
         }
     }
 }
@@ -73,13 +73,11 @@ pub(super) fn bytes(value: u64) -> String {
 
 impl App {
     pub(super) fn poll_usage(&mut self) -> Task<Message> {
-        if self.traffic.pending {
+        let Some(ticket) = self.reads.begin_usage() else {
             return Task::none();
-        }
-        self.traffic.pending = true;
-        let epoch = self.epoch;
+        };
         cosmic::task::future(async move {
-            Message::UsageObserved(epoch, nm_tunnel_client::usage_snapshot().await)
+            Message::UsageObserved(ticket, nm_tunnel_client::usage_snapshot().await)
         })
     }
 
@@ -87,7 +85,7 @@ impl App {
         let spacing = theme::spacing();
         let live = self.traffic.live();
         let data = self.traffic.snapshot.as_ref().filter(|s| s.available);
-        let metric = |label: &'static str, rate: Option<u64>| {
+        let metric = |label: String, rate: Option<u64>| {
             widget::column::with_capacity(2)
                 .spacing(spacing.space_xxxs)
                 .push(widget::text::caption(label))
@@ -97,25 +95,28 @@ impl App {
         };
         let metrics = widget::flex_row(vec![
             metric(
-                "— Download",
+                fl!("download-legend"),
                 data.filter(|_| live).map(|s| s.download_bytes_per_second),
             )
             .into(),
             metric(
-                "┄ Upload",
+                fl!("upload-legend"),
                 data.filter(|_| live).map(|s| s.upload_bytes_per_second),
             )
             .into(),
         ])
         .spacing(spacing.space_l)
         .min_item_width(180.0);
-        let totals = data.map_or("No traffic sample yet".into(), |s| {
-            format!(
-                "Last attempt · ↓ {} · ↑ {}",
-                bytes(s.counters.download_bytes),
-                bytes(s.counters.upload_bytes)
-            )
-        });
+        let totals = data.map_or_else(
+            || fl!("no-traffic"),
+            |s| {
+                fl!(
+                    "last-attempt-traffic",
+                    download = bytes(s.counters.download_bytes),
+                    upload = bytes(s.counters.upload_bytes)
+                )
+            },
+        );
         let mut graph = widget::column::with_capacity(3)
             .spacing(spacing.space_s)
             .push(metrics);
@@ -126,8 +127,10 @@ impl App {
             .header(
                 widget::row::with_capacity(2)
                     .align_y(Alignment::Center)
-                    .push(widget::text::heading("Traffic").width(Length::Fill))
-                    .push(widget::button::text("Details").on_press(Message::ShowDetails(None))),
+                    .push(widget::text::heading(fl!("traffic")).width(Length::Fill))
+                    .push(
+                        widget::button::text(fl!("details")).on_press(Message::ShowDetails(None)),
+                    ),
             )
             .add(
                 graph.push(
@@ -222,9 +225,9 @@ impl canvas::Program<Message, cosmic::Theme, cosmic::Renderer> for Chart<'_> {
             frame.fill_text(text);
         }
         for (label, x) in [
-            ("60s ago", 0.0),
-            ("30s", width / 2.0),
-            ("Now", (width - 24.0).max(0.0)),
+            (fl!("sixty-seconds-ago"), 0.0),
+            (fl!("thirty-seconds"), width / 2.0),
+            (fl!("now"), (width - 45.0).max(0.0)),
         ] {
             let mut text = canvas::Text::from(label);
             text.position = Point::new(x, height + 8.0);

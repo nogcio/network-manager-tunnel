@@ -37,8 +37,11 @@ humans and AI-assisted changes; local instructions may add detail, not weaken po
 
 - Ordinary checks never need root, tunnel activation, service installation or changes
   to host routes/DNS/firewall. Use explicitly authorized disposable VMs for those tests.
-- Secrets belong in NM `vpn.secrets` and the secret-agent flow, never `vpn.data`, logs,
-  argv, fixtures or AI indexes. Subscription URLs can contain secrets too.
+- VPN credentials belong in NM `vpn.secrets` and the secret-agent flow. The
+  owner-approved exception for subscription URLs uses the standard desktop Secret
+  Service; XDG source metadata must not contain URLs/tokens. No plaintext fallback
+  or application-managed encryption/keyring. Neither kind of secret belongs in
+  `vpn.data`, logs, argv, fixtures or AI indexes.
 - Preserve endpoint bypass, bootstrap DNS, IPv6 leak prevention, teardown and fail-closed
   behavior. Unsupported settings must error, not silently downgrade protection.
 - Run `cargo xtask check` and applicable checks from `docs/quality.md`. Do not bypass

@@ -28,6 +28,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("This probe requires a disposable VM, never the host.".into());
     }
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args == ["storage"] {
+        return storage_contract().await;
+    }
     if args == ["inspect"] {
         let observed = snapshot().await?;
         println!(
@@ -91,7 +94,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         credential: "12345678-1234-4234-8234-123456789abc".to_owned().into(),
         security: Security::Reality,
         server_name: "peer.example".into(),
-        public_key: "8y8p8aO5lpROX8wIDsOzzLt13iQ-2DXZmTuqXjy0om0".into(),
+        public_key: std::env::var("NM_TUNNEL_LAB_PUBLIC_KEY")
+            .unwrap_or_else(|_| "8y8p8aO5lpROX8wIDsOzzLt13iQ-2DXZmTuqXjy0om0".into()),
         short_id: "abababababababab".into(),
         vision: false,
         ..Default::default()
@@ -141,5 +145,98 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })
     .await??;
     println!("PASS: actual TUN TCP echo; exiting the client deliberately leaves NM in control.");
+    Ok(())
+}
+
+/// Exercise real NM persistence and version checks without activating any tunnel.
+async fn storage_contract() -> Result<(), Box<dyn std::error::Error>> {
+    use nm_tunnel_client::{
+        ClientError, LanBypass, ProfileChanges, delete_profile, edit_profile, update_from_source,
+    };
+    use nm_tunnel_profile::DnsOverride;
+    const STORAGE_NAME: &str = "NMT storage contract";
+    let before = snapshot().await?;
+    if before
+        .profiles
+        .iter()
+        .any(|profile| profile.name() == STORAGE_NAME)
+    {
+        return Err("Refusing to overwrite a pre-existing lab profile.".into());
+    }
+    let draft = || Draft {
+        name: STORAGE_NAME.into(),
+        server: "192.0.2.2".into(),
+        port: "24444".into(),
+        credential: "12345678-1234-4234-8234-123456789abc".to_owned().into(),
+        security: Security::Tls,
+        server_name: "peer.example".into(),
+        ..Default::default()
+    };
+    let saved = save_profile(draft().validate().map_err(|_| "Invalid lab profile")?).await?;
+    let current = || async { snapshot().await };
+    let observed = current().await?;
+    let first = observed
+        .profiles
+        .iter()
+        .find(|profile| profile.id() == saved.id())
+        .ok_or("Saved profile missing")?;
+    if !first.persistent() {
+        return Err("NM did not persist the lab profile".into());
+    }
+    let changes = ProfileChanges {
+        name: STORAGE_NAME.into(),
+        dns: DnsOverride::ProxyIpv4("9.9.9.9".parse()?),
+        lan: LanBypass::None,
+        intercept: true,
+        fake_ip: false,
+    };
+    edit_profile(first, changes.clone()).await?;
+    if edit_profile(first, changes.clone()).await != Err(ClientError::Stale) {
+        return Err("A stale native NM version did not reject".into());
+    }
+    let observed = current().await?;
+    let second = observed
+        .profiles
+        .iter()
+        .find(|profile| profile.id() == saved.id())
+        .ok_or("Edited profile missing")?;
+    if second.dns_override() != changes.dns || !second.dns_interception() {
+        return Err("Native NM edit metadata mismatch".into());
+    }
+    let mut changed_source = draft();
+    changed_source.port = "24449".into();
+    update_from_source(
+        second,
+        changed_source
+            .validate()
+            .map_err(|_| "Invalid updated lab source")?,
+    )
+    .await?;
+    let observed = current().await?;
+    let third = observed
+        .profiles
+        .iter()
+        .find(|profile| profile.id() == saved.id())
+        .ok_or("Updated profile missing")?;
+    if third.name() != STORAGE_NAME
+        || third.dns_override() != changes.dns
+        || !third.dns_interception()
+    {
+        return Err("Source update did not preserve compatible native overrides".into());
+    }
+    delete_profile(third).await?;
+    let after = current().await?;
+    if after
+        .profiles
+        .iter()
+        .any(|profile| profile.id() == saved.id())
+        || after.active.len() != before.active.len()
+        || after.profiles.len() != before.profiles.len()
+    {
+        return Err("Native storage contract changed unrelated profile/lifecycle state".into());
+    }
+    println!(
+        "PASS: native NM persistent save, narrow edit, stale-version refusal, source override preservation and deletion; no activation or secret retrieval."
+    );
     Ok(())
 }

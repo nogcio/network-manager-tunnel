@@ -2,10 +2,7 @@
 use nm_tunnel_profile::SERVICE_TYPE;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use zbus::{
-    proxy::{CacheProperties, MethodFlags},
-    zvariant::Type,
-};
+use zbus::{proxy::MethodFlags, zvariant::Type};
 
 const PATH: &str = "/org/freedesktop/NetworkManager/VPN/Plugin";
 const INTERFACE: &str = "org.freedesktop.NetworkManager.tunnel.Telemetry";
@@ -139,24 +136,14 @@ pub async fn usage_snapshot() -> Result<Option<UsageSnapshot>, UsageError> {
 }
 
 async fn read(bus: &zbus::Connection) -> Result<Option<UsageSnapshot>, UsageError> {
-    let dbus = zbus::fdo::DBusProxy::new(bus)
+    let Some(owner) = crate::transport::ReadOnly::pin(bus, SERVICE_TYPE)
         .await
-        .map_err(|_| UsageError::Unavailable)?;
-    let name = SERVICE_TYPE.try_into().map_err(|_| UsageError::Invalid)?;
-    let owner = match dbus.get_name_owner(name).await {
-        Ok(owner) => owner,
-        Err(zbus::fdo::Error::NameHasNoOwner(_)) => return Ok(None),
-        Err(_) => return Err(UsageError::Unavailable),
+        .map_err(|_| UsageError::Unavailable)?
+    else {
+        return Ok(None);
     };
-    let proxy = zbus::proxy::Builder::<zbus::Proxy<'_>>::new(bus)
-        .destination(owner.as_str())
-        .map_err(|_| UsageError::Invalid)?
-        .path(PATH)
-        .map_err(|_| UsageError::Invalid)?
-        .interface(INTERFACE)
-        .map_err(|_| UsageError::Invalid)?
-        .cache_properties(CacheProperties::No)
-        .build()
+    let proxy = owner
+        .proxy(PATH, INTERFACE)
         .await
         .map_err(|_| UsageError::Unavailable)?;
     let snapshot: UsageSnapshot = proxy
@@ -173,13 +160,10 @@ async fn read(bus: &zbus::Connection) -> Result<Option<UsageSnapshot>, UsageErro
         })?
         .ok_or(UsageError::Unavailable)?;
     snapshot.validate()?;
-    let current = dbus
-        .get_name_owner(SERVICE_TYPE.try_into().map_err(|_| UsageError::Invalid)?)
+    owner
+        .validate()
         .await
         .map_err(|_| UsageError::Unavailable)?;
-    if owner != current {
-        return Err(UsageError::Unavailable);
-    }
     Ok(Some(snapshot))
 }
 

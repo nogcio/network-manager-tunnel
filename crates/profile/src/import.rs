@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 /// No fetching, subscription discovery, disk writes or fallback interpretation.
 /// Rejects unknown/duplicate parameters and never includes input in errors.
 /// A failed import leaves the caller's current draft untouched.
+/// IPv6 literal endpoints reject; hostname endpoints require IPv4 at activation.
 pub fn import_vless(input: &str) -> Result<Draft, ValidationError> {
     let error = |message| ValidationError::new(Field::Link, message);
     if input.len() > 8192 {
@@ -27,7 +28,11 @@ pub fn import_vless(input: &str) -> Result<Draft, ValidationError> {
     let server = match url.host() {
         Some(url::Host::Domain(value)) => value.to_owned(),
         Some(url::Host::Ipv4(value)) => value.to_string(),
-        Some(url::Host::Ipv6(value)) => value.to_string(),
+        Some(url::Host::Ipv6(_)) => {
+            return Err(error(
+                "IPv6 endpoints are unsupported in this IPv4-only version; use an IPv4 address or a hostname with an A record.",
+            ));
+        }
         None => return Err(error("The link needs a server hostname or IP address.")),
     };
     let mut params = BTreeMap::new();
@@ -122,6 +127,13 @@ pub fn import_vless(input: &str) -> Result<Draft, ValidationError> {
         short_id: get("sid").into(),
         vision,
         alpn: get("alpn").into(),
+        tcp_domain_policy: None,
+        dns_override: crate::DnsOverride::Inherit,
+        lan_bypass: false,
+        private_lan_bypass: false,
+        dns_interception: false,
+        fake_ip: false,
+        source_policy: None,
     };
     draft
         .validate()

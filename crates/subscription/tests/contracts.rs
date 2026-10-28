@@ -43,6 +43,30 @@ fn unsupported_protocols_and_settings_remain_visible() -> Result<(), Box<dyn std
 }
 
 #[test]
+fn ipv6_nodes_stay_visible_but_cannot_be_saved_as_supported_profiles()
+-> Result<(), Box<dyn std::error::Error>> {
+    let ipv6 = LINK
+        .replace("proxy.example", "[2001:db8::1234]")
+        .replace("#Example", "#IPv6 node");
+    let body = format!("{LINK}\n{ipv6}");
+    for bytes in [body.clone(), STANDARD.encode(&body)] {
+        let list = parse_subscription(bytes.as_bytes())?;
+        assert_eq!(list.entries().len(), 2);
+        assert_eq!(list.supported_count(), 1);
+        assert!(list.entries()[0].profile().is_ok());
+        assert_eq!(list.entries()[1].name(), "IPv6 node");
+        let error = list.entries()[1]
+            .profile()
+            .err()
+            .ok_or("IPv6 node admitted")?;
+        assert!(error.contains("IPv4-only"));
+        assert!(!error.contains("2001:db8"));
+        assert!(!error.contains("12345678-1234"));
+    }
+    Ok(())
+}
+
+#[test]
 fn invalid_documents_and_limits_fail_atomically() {
     for input in [
         "",
@@ -110,11 +134,7 @@ fn missing_names_are_stable_and_match_the_saved_profile() -> Result<(), Box<dyn 
     let entry = &list.entries()[0];
     assert_eq!(entry.name(), "Profile 1");
     assert_eq!(
-        entry
-            .profile()
-            .map_err(|_| "valid entry rejected")?
-            .fields()
-            .name,
+        entry.profile().map_err(|_| "valid entry rejected")?.name(),
         "Profile 1"
     );
     Ok(())
@@ -142,7 +162,7 @@ fn mixed_tcp_reality_and_websocket_tls_subscriptions_import_all_nodes()
             .profile()
             .map_err(|_| "valid provider-shaped node rejected")?;
         assert!(matches!(
-            (&profile.fields().transport, index % 2),
+            (profile.node().transport(), index % 2),
             (nm_tunnel_profile::Transport::Tcp, 0)
                 | (nm_tunnel_profile::Transport::WebSocket { .. }, 1)
         ));

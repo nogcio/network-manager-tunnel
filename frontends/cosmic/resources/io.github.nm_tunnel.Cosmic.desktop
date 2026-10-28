@@ -1,9 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=NetworkManager Tunnel
+Name[ru]=NetworkManager Tunnel
 Comment=Select subscription profiles for NetworkManager
+Comment[ru]=Выбор профилей подписки для NetworkManager
 Exec=nm-tunnel-cosmic
 Icon=io.github.nm_tunnel.Cosmic
 Terminal=false
-Categories=Network;Settings;
+Categories=Network;
 StartupNotify=true

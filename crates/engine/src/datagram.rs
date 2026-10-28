@@ -1,14 +1,13 @@
 //! Bounded VLESS UDP associations over a single explicitly supplied endpoint socket.
-use crate::{Error, adapter};
+use crate::{EndpointStream, Error, adapter};
 use meow_common::{Metadata, Network, ProxyAdapter, ProxyPacketConn};
 use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::net::TcpStream;
 
-struct SuppliedSocket(Mutex<Option<TcpStream>>);
+struct SuppliedSocket(Mutex<Option<Box<dyn meow_transport::Stream>>>);
 
 #[async_trait::async_trait]
 impl meow_proxy::dialer::TcpDialer for SuppliedSocket {
@@ -24,7 +23,7 @@ impl meow_proxy::dialer::TcpDialer for SuppliedSocket {
             .map_err(|_| std::io::Error::other("Socket state failed."))?
             .take()
             .ok_or_else(|| std::io::Error::other("Implicit redial refused."))?;
-        Ok(Box::new(stream))
+        Ok(stream)
     }
 }
 
@@ -35,6 +34,7 @@ impl meow_proxy::dialer::TcpDialer for SuppliedSocket {
 pub struct DatagramTunnel {
     inner: Box<dyn ProxyPacketConn>,
     destination: SocketAddr,
+    xudp: bool,
 }
 
 impl std::fmt::Debug for DatagramTunnel {
@@ -50,7 +50,8 @@ impl DatagramTunnel {
     /// Returns [`Error::Configuration`] for oversized payloads, before writing,
     /// or [`Error::Handshake`] for association I/O failure or a short write.
     pub async fn send(&self, payload: &[u8]) -> Result<(), Error> {
-        if payload.len() > 65507 {
+        if payload.len() > if self.xudp { 8192 } else { 65507 } || (self.xudp && payload.is_empty())
+        {
             return Err(Error::Configuration);
         }
         let written = self
@@ -87,36 +88,46 @@ impl DatagramTunnel {
     }
 }
 
-/// Establish a destination-bound UDP-over-VLESS association on an already-connected
-/// host-approved TCP socket. Ownership, ten-second setup deadline and endpoint checks
+/// Establish a destination-bound UDP-over-VLESS association on an owned, approved
+/// TCP input or fixed-peer Unix relay. Ownership, ten-second setup deadline and checks
 /// match `connect_tcp`. The only injected dial yields this socket exactly once; no
 /// resolver/reconnect socket exists. Vision is TCP-only: the library deliberately uses
 /// ordinary VLESS UDP framing on the same selected TLS/REALITY/WS transport.
 /// Success alone does not prove authentication: exchange an actual datagram first.
 pub async fn connect_udp(
     profile: &nm_tunnel_profile::Profile,
-    socket: TcpStream,
+    socket: impl TryInto<EndpointStream>,
     endpoint: SocketAddr,
     destination: SocketAddr,
 ) -> Result<DatagramTunnel, Error> {
-    let fields = profile.fields();
-    if socket.peer_addr().map_err(|_| Error::Endpoint)? != endpoint
-        || endpoint.port()
-            != fields
-                .port
-                .parse::<u16>()
-                .map_err(|_| Error::Configuration)?
-        || fields
-            .server
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip != endpoint.ip())
+    let socket = socket.try_into().map_err(|_| Error::Endpoint)?;
+    let node = profile.node();
+    if socket.peer != endpoint
+        || endpoint.port() != node.endpoint().port()
+        || node
+            .endpoint()
+            .ipv4()
+            .is_some_and(|ip| std::net::IpAddr::V4(ip) != endpoint.ip())
         || destination.port() == 0
         || destination.ip().is_unspecified()
     {
         return Err(Error::Endpoint);
     }
-    let dialer = Arc::new(SuppliedSocket(Mutex::new(Some(socket))));
+    let dialer = Arc::new(SuppliedSocket(Mutex::new(Some(socket.inner))));
     let adapter = adapter::build_with_dialer(profile, dialer)?;
+    let xudp = node.udp_mode() == nm_tunnel_profile::UdpMode::Xudp;
+    let adapter = if xudp {
+        adapter.with_mux(meow_proxy::mux::MuxOptions {
+            protocol: meow_proxy::mux::Protocol::MuxCool,
+            max_connections: 1,
+            min_streams: 1,
+            max_streams: 1,
+            padding: false,
+            only_tcp: false,
+        })
+    } else {
+        adapter
+    };
     let metadata = Metadata {
         network: Network::Udp,
         dst_ip: Some(destination.ip()),
@@ -127,7 +138,11 @@ pub async fn connect_udp(
         .await
         .map_err(|_| Error::Timeout)?
         .map_err(|_| Error::Handshake)?;
-    Ok(DatagramTunnel { inner, destination })
+    Ok(DatagramTunnel {
+        inner,
+        destination,
+        xudp,
+    })
 }
 
 #[cfg(test)]
@@ -158,12 +173,14 @@ mod tests {
         let destination = SocketAddr::from(([192, 0, 2, 1], 53));
         for source in [destination, SocketAddr::from(([0, 0, 0, 0], 0))] {
             let tunnel = DatagramTunnel {
+                xudp: false,
                 inner: Box::new(Packet(source)),
                 destination,
             };
             assert_eq!(tunnel.receive().await?, b"dns");
         }
         let tunnel = DatagramTunnel {
+            xudp: false,
             inner: Box::new(Packet(SocketAddr::from(([192, 0, 2, 2], 53)))),
             destination,
         };

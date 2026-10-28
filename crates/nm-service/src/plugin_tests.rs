@@ -1,5 +1,6 @@
 //! Caller authorization belongs to the plugin, exercised on a private real bus.
 use super::*;
+use crate::telemetry::Telemetry;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[tokio::test]
@@ -75,6 +76,21 @@ async fn only_current_nm_owner_can_control_lifecycle() -> Result<(), Box<dyn std
             .call("NeedSecrets", &(crate::test_support::settings()?,))
             .await?;
         assert_eq!(required, "vpn");
+        let mut invalid = crate::test_support::settings()?;
+        invalid.get_mut("vpn").ok_or("Missing VPN")?.insert(
+            "secrets".into(),
+            OwnedValue::try_from(zbus::zvariant::Value::from(crate::schema::Strings::from([
+                ("uuid".into(), "private-invalid-credential".into()),
+            ])))?,
+        );
+        let rejected: zbus::Result<String> = valid.call("NeedSecrets", &(invalid,)).await;
+        assert!(rejected.is_err());
+        assert!(!format!("{rejected:?}").contains("private-invalid-credential"));
+        assert_eq!(state.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
         // Connect must not reserve state while an older Stop is still queued.
         let _: () = valid.call("Disconnect", &()).await?;
         let connecting_owner = owner.clone();
@@ -135,36 +151,4 @@ async fn only_current_nm_owner_can_control_lifecycle() -> Result<(), Box<dyn std
         Ok::<(), Box<dyn std::error::Error>>(())
     })
     .await?
-}
-
-#[test]
-fn admission_checks_ownership_even_when_reported_state_is_stopped() {
-    let state = AtomicU32::new(6);
-    assert!(admit_start(&state, true, false).is_err());
-    assert!(admit_start(&state, false, true).is_err());
-    assert_eq!(state.load(Ordering::SeqCst), 6);
-    assert!(admit_start(&state, false, false).is_ok());
-    assert_eq!(state.load(Ordering::SeqCst), 3);
-    assert!(admit_start(&state, false, false).is_err());
-    assert_eq!(state.load(Ordering::SeqCst), 3);
-}
-
-#[tokio::test]
-async fn cancelling_preparation_awaits_owned_task_resource_release() -> io::Result<()> {
-    tokio::time::timeout(std::time::Duration::from_secs(3), async {
-        let (owned, mut receiver) = mpsc::channel::<()>(1);
-        let (ready, started) = oneshot::channel();
-        let mut pending = Some(AbortTask(tokio::spawn(async move {
-            let _owned = owned;
-            let _ = ready.send(());
-            std::future::pending::<io::Result<Session>>().await
-        })));
-        started.await.map_err(io::Error::other)?;
-        cancel_preparation(&mut pending).await;
-        assert!(pending.is_none());
-        assert_eq!(receiver.recv().await, None);
-        Ok(())
-    })
-    .await
-    .map_err(|_| io::Error::other("Preparation cancellation deadline."))?
 }

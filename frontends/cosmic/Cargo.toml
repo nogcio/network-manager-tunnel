@@ -18,8 +18,20 @@ nm-tunnel-profile.workspace = true
 nm-tunnel-client.workspace = true
 nm-tunnel-subscription.workspace = true
 secrecy.workspace = true
+secret-service = { version = "=5.2.0", default-features = false, features = ["rt-tokio-crypto-rust"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio.workspace = true
+uuid.workspace = true
+rustix = { version = "1.1", features = ["fs", "process"] }
+i18n-embed = { version = "=0.16.0", features = ["fluent-system", "desktop-requester"] }
+i18n-embed-fl = "=0.10.1"
+rust-embed = "=8.13.0"
 image = { version = "=0.25.10", default-features = false, features = ["png"], optional = true }
 libcosmic = { version = "=1.0.0", git = "https://github.com/pop-os/libcosmic", rev = "430f3d48a97d8779f9c1985473912e594ccca1ae", default-features = false, features = ["winit", "wgpu", "tokio", "wayland", "dbus-config", "a11y"] }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+fluent-syntax = "=0.12.0"

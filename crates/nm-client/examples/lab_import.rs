@@ -37,22 +37,98 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !std::path::Path::new("/run/nmt-lab-authorized").is_file() {
         return Err("This command is restricted to the explicitly authorized lab VM.".into());
     }
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    let (format, remaining) = if args.first().is_some_and(|arg| arg == "--nodes-only") {
+        (
+            nm_tunnel_subscription::SubscriptionFormat::NodesOnly,
+            &args[1..],
+        )
+    } else {
+        (
+            nm_tunnel_subscription::SubscriptionFormat::Complete,
+            args.as_slice(),
+        )
+    };
+    let replacement = match remaining {
+        [] => None,
+        [flag, id, entry_flag, entry] if flag == "--replace" && entry_flag == "--entry" => {
+            let id = uuid::Uuid::parse_str(id)
+                .map_err(|_| "Expected an independent NM connection UUID, not a credential.")?;
+            let entry = entry
+                .parse::<usize>()
+                .ok()
+                .filter(|entry| *entry > 0)
+                .ok_or("Expected a one-based source entry number.")?;
+            Some((id.to_string(), entry - 1))
+        }
+        _ => {
+            return Err(
+                "Expected [--nodes-only] [--replace NM_CONNECTION_UUID --entry NUMBER].".into(),
+            );
+        }
+    };
+    if format == nm_tunnel_subscription::SubscriptionFormat::NodesOnly {
+        println!(
+            "Explicit node-only mode does not preserve source DNS/routing. Legacy VPN DNS is 1.1.1.1; domain/LAN exceptions are not imported."
+        );
+    }
     println!(
         "This import saves profiles and credentials on disk in NetworkManager, not a desktop keyring. Autoconnect is off; the subscription URL is never saved."
     );
+    if replacement.is_some() {
+        println!(
+            "Explicit replacement: VPN transport, credentials, DNS/routing and IPv4/IPv6 overrides will be replaced. The selected NM UUID, name and connection permissions are retained. The running VPN is not reconnected; the new settings apply on next activation."
+        );
+    }
     let source = read_source(std::io::stdin(), Duration::from_secs(20))?;
-    tokio::runtime::Runtime::new()?.block_on(import(source))
+    tokio::runtime::Runtime::new()?.block_on(import(source, format, replacement))
 }
 
-async fn import(source: String) -> Result<(), Box<dyn std::error::Error>> {
+async fn import(
+    source: String,
+    format: nm_tunnel_subscription::SubscriptionFormat,
+    replacement: Option<(String, usize)>,
+) -> Result<(), Box<dyn std::error::Error>> {
     println!("Loading authorized subscription; source and node details are never printed.");
-    let subscription = nm_tunnel_subscription::fetch_subscription(source.trim().into()).await?;
+    let subscription =
+        nm_tunnel_subscription::fetch_subscription_format(source.trim().into(), format).await?;
+    if let Some(notice) = subscription.native_policy_notice() {
+        println!("{notice}");
+    }
+    if let Some((id, index)) = replacement {
+        let profile = subscription
+            .entries()
+            .get(index)
+            .ok_or("Source entry is unavailable; nothing was updated.")?
+            .profile()
+            .map_err(|_| "Source entry is unsupported; nothing was updated.")?
+            .clone();
+        let observed = nm_tunnel_client::snapshot().await?;
+        let mut matching = observed
+            .profiles
+            .iter()
+            .filter(|profile| profile.id() == id);
+        let saved = matching
+            .next()
+            .ok_or("Selected saved profile is unavailable; nothing was updated.")?;
+        if matching.next().is_some() {
+            return Err("Ambiguous target identity; nothing was updated.".into());
+        }
+        println!(
+            "Updating the selected saved profile with a checked NM version; no activation or automatic retry."
+        );
+        nm_tunnel_client::replace_profile(saved, profile).await?;
+        println!(
+            "Saved profile replacement confirmed; the existing connection was not reconnected."
+        );
+        return Ok(());
+    }
     let mut imported = 0;
     for entry in subscription.entries() {
         let Ok(profile) = entry.profile() else {
             continue;
         };
-        let mut draft = profile.fields().clone();
+        let mut draft = profile.to_draft();
         draft.name = format!("NMT lab node {}", imported + 1);
         let profile = draft.validate().map_err(|_| "Invalid imported profile.")?;
         nm_tunnel_client::save_profile(profile).await?;

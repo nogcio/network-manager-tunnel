@@ -35,9 +35,27 @@ impl Entry {
 #[derive(Clone, Debug)]
 pub struct Subscription {
     entries: Vec<Entry>,
+    complete: bool,
 }
 
 impl Subscription {
+    /// Disclosure required before saving a complete native IPv4 subset. No source
+    /// addresses, paths, credentials or controller tokens appear in this notice.
+    pub fn native_policy_notice(&self) -> Option<&'static str> {
+        self.complete.then_some("Complete native IPv4 policy: source DNS/routing and XUDP are retained. IPv6 is disabled; source listeners, platform proxy controls, Clash API/web UI and file paths are replaced by NM/COSMIC. FakeIP identities persist in the root-owned journal; local/bootstrap DNS uses plain IPv4 DNS on the NM uplink. Protection is automatic during the VPN session and removed on clean disconnect or terminal failure, restoring ordinary networking without VPN. No boot service enablement is required; cached FakeIP destinations are not protected outside the session or after reboot. No source UI/download URL is fetched.")
+    }
+    pub(crate) fn from_complete(nodes: Vec<(String, Profile)>) -> Self {
+        Self {
+            entries: nodes
+                .into_iter()
+                .map(|(name, profile)| Entry {
+                    name,
+                    profile: Ok(profile),
+                })
+                .collect(),
+            complete: true,
+        }
+    }
     /// Nodes in source order, including unsupported records.
     pub fn entries(&self) -> &[Entry] {
         &self.entries
@@ -134,5 +152,8 @@ pub fn parse_subscription(bytes: &[u8]) -> Result<Subscription, SubscriptionErro
     if entries.is_empty() {
         return Err(SubscriptionError::Format);
     }
-    Ok(Subscription { entries })
+    Ok(Subscription {
+        entries,
+        complete: false,
+    })
 }

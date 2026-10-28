@@ -1,6 +1,9 @@
 # ADR 0007: Explicit NM storage and connection control in COSMIC
 
-Status: implemented experimentally; native acceptance pending.
+Status: implemented experimentally; bounded synthetic NM/TUN VM checks passed,
+broader native acceptance pending. Source URL persistence is superseded by
+[ADR 0028](0028-subscription-url-secret-service.md); failure recovery by
+[ADR 0026](0026-automatic-session-recovery.md).
 Date: 2026-10-25.
 
 ## Context
@@ -22,7 +25,9 @@ condition for using NM profiles. The backend and dependency graph remain experim
   stores profiles and credentials on disk, not in a desktop keyring. This revises
   the initial session-only default and optional persistence decision (2026-10-26):
   profiles should remain usable after restart without a separate storage toggle.
-  Do not persist the subscription URL or maintain an app-side profile database.
+  Do not maintain an app-side profile database. The original session-only URL rule
+  is superseded by ADR 0028's desktop Secret Service catalog; VPN credentials remain
+  exclusively NM-owned.
 - Use AddConnection2 TO_DISK only, with autoconnect off and credentials only in
   `vpn.secrets`. Never fall back to IN_MEMORY on failure or automatically migrate
   existing temporary profiles. NM owns backing-file permissions. Request standard
@@ -44,9 +49,10 @@ condition for using NM profiles. The backend and dependency graph remain experim
   remain disabled for that app session; refresh cannot clear that uncertainty.
 - Closing the GUI sends no Disconnect. Reopening can observe/control the existing
   NM connection without a subscription or credentials lookup.
-- Do not auto-clear a retained crash guard. Explicit privileged recovery remains
-  a separate authorized evaluation workflow; friendly desktop-authorized recovery
-  and native secret-agent integration remain future work. Packaging follows
+- The original retained-crash-guard/manual-recovery behavior is superseded by
+  ADR 0026's automatic terminal cleanup and return to ordinary networking without
+  VPN. The frontend still never clears guards. Native secret-agent integration
+  remains future work. Packaging follows
   [ADR 0008](0008-local-arch-installer.md).
 
 ## Evidence and limits

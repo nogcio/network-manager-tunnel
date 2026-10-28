@@ -37,9 +37,28 @@ public remote. No local override is shipped in this recipe.
 NetworkManager directly spawns the executable in `nm-tunnel.name`, as its VPN
 plugin API expects. The root supervisor authenticates the current NM D-Bus owner
 and drops the protocol worker to the dedicated `nm-tunnel` account. There is no
-separate systemd service, unit sandbox or always-on daemon. NM-spawned processes
+separate systemd VPN manager. NM-spawned processes
 inherit NM's service environment/confinement; this package does not promise an
 additional supervisor sandbox.
+
+The required `nm-tunnel-guard-recovery.service` is separately D-Bus-activated by
+the backend before guard installation. It reuses the service binary in an independent
+systemd cgroup and automatically cleans orphan guards after backend death. It has
+CAP_NET_ADMIN and Unix/netlink access, but no profiles, credentials or route/DNS
+management. Its policy, activation descriptor and unit must be shipped together;
+there is no installation-time enable/start. Missing recovery refuses activation.
+Bounded synthetic legacy IPv4 VM crash/hang cleanup passed; helper-restart races
+and broader packet/source-policy acceptance remain pending under
+[ADR 0026](../../docs/decisions/0026-automatic-session-recovery.md).
+
+The package additionally supplies optional `nm-tunnel-fakeip-guard.service`, a
+restricted one-shot reserved-range firewall restoration before NM. It is never
+enabled/started by the recipe or frontend. Persistent FakeIP activation requires
+only the absolute XDG pin in installed unit configuration, not boot enablement.
+The unit no longer declares an NM RequiredBy dependency. Old enabled symlinks need
+explicit retirement when migrating. It does not load profiles, start a VPN,
+manage routes/DNS or read the identity journal. Native/boot acceptance is pending;
+see [ADR 0016](../../docs/decisions/0016-persistent-ipv4-fakeip.md).
 
 The D-Bus activation file is retained because the unprivileged frontend uses
 activatable-name discovery to detect the installed backend before first Connect.
@@ -83,9 +102,13 @@ a deprecated `GPL-2.0` identifier encountered during the UI source scan, without
 selecting that identifier or failing generation. Inspect diagnostics and actual
 outputs rather than interpreting exit success as proof of complete notice coverage.
 
-The owner reports a working experimental local Arch installation from a reviewed
-local-source build. This does not validate a public-source build or a clean Arch
-build/install/update/removal/reboot cycle. The installed package can lag source UI
-changes; running the source frontend separately does not replace installed files.
+An owner-authorized local snapshot passed an unprivileged makepkg release build,
+release tests, notice generation, package inspection and pacman upgrade after
+Tunnel disconnection/cleanup. Installed artifact hashes matched and pacman reported
+no altered files. This does not validate the public VCS recipe, a clean Arch
+removal/reboot cycle or the new backend's provider interoperability. Builds must
+use their own target tree: reusing cached artifacts from a different extracted
+snapshot with preserved timestamps produced stale API errors. The installed
+package can lag later source changes; running source does not replace installed files.
 Broader packaging/runtime acceptance remains pending. Source publication still
 requires owner authorization, independently of these technical limitations.

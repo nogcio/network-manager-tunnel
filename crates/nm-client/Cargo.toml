@@ -10,6 +10,7 @@ layer = "client"
 
 [dependencies]
 nm-tunnel-profile.workspace = true
+nm-tunnel-schema.workspace = true
 secrecy.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

@@ -1,4 +1,4 @@
-use nm_tunnel_engine::{Error, connect_tcp, connect_udp};
+use nm_tunnel_engine::{EndpointStream, Error, connect_tcp, connect_udp};
 use nm_tunnel_profile::{Draft, Profile, Security};
 use std::{
     net::{Ipv4Addr, SocketAddr},
@@ -23,6 +23,54 @@ fn profile(endpoint: SocketAddr) -> Result<Profile, Box<dyn std::error::Error>> 
     }
     .validate()
     .map_err(|_| "invalid fixture".into())
+}
+
+#[tokio::test]
+async fn relayed_endpoint_metadata_is_checked_before_handshake_and_cancellation_owns_the_channel()
+-> Result<(), Box<dyn std::error::Error>> {
+    timeout(Duration::from_secs(5), async {
+        let endpoint: SocketAddr = "192.0.2.1:443".parse()?;
+        for udp in [false, true] {
+            for mismatch in [false, true] {
+                let (channel, mut peer) = tokio::net::UnixStream::pair()?;
+                let input = EndpointStream::relayed(channel, endpoint)?;
+                let profile = profile(endpoint)?;
+                let approved = if mismatch {
+                    "192.0.2.2:443".parse()?
+                } else {
+                    endpoint
+                };
+                let task = tokio::spawn(async move {
+                    if udp {
+                        connect_udp(&profile, input, approved, endpoint)
+                            .await
+                            .map(|_| ())
+                    } else {
+                        connect_tcp(&profile, input, approved, endpoint)
+                            .await
+                            .map(|_| ())
+                    }
+                });
+                if mismatch {
+                    assert!(matches!(task.await?, Err(Error::Endpoint)));
+                } else {
+                    assert_eq!(peer.read_u8().await?, 22);
+                    task.abort();
+                    assert!(task.await.is_err_and(|e| e.is_cancelled()));
+                }
+                let mut bytes = Vec::new();
+                peer.read_to_end(&mut bytes).await?;
+                if mismatch {
+                    assert!(bytes.is_empty());
+                }
+            }
+        }
+        let (channel, mut peer) = tokio::net::UnixStream::pair()?;
+        assert!(EndpointStream::relayed(channel, "0.0.0.0:0".parse()?).is_err());
+        assert_eq!(peer.read(&mut [0]).await?, 0);
+        Ok::<_, Box<dyn std::error::Error>>(())
+    })
+    .await?
 }
 
 #[tokio::test]

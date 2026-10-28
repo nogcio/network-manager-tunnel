@@ -63,8 +63,16 @@ package() {
         "$pkgdir/usr/share/dbus-1/system-services/org.freedesktop.NetworkManager.tunnel.service"
     install -Dm644 packaging/dbus/org.freedesktop.NetworkManager.tunnel.conf \
         "$pkgdir/usr/share/dbus-1/system.d/org.freedesktop.NetworkManager.tunnel.conf"
+    install -Dm644 packaging/dbus/org.freedesktop.NetworkManager.tunnel.Recovery.service \
+        "$pkgdir/usr/share/dbus-1/system-services/org.freedesktop.NetworkManager.tunnel.Recovery.service"
+    install -Dm644 packaging/dbus/org.freedesktop.NetworkManager.tunnel.Recovery.conf \
+        "$pkgdir/usr/share/dbus-1/system.d/org.freedesktop.NetworkManager.tunnel.Recovery.conf"
+    install -Dm644 packaging/systemd/nm-tunnel-guard-recovery.service \
+        "$pkgdir/usr/lib/systemd/system/nm-tunnel-guard-recovery.service"
     install -Dm644 packaging/sysusers/nm-tunnel.conf \
         "$pkgdir/usr/lib/sysusers.d/nm-tunnel.conf"
+    install -Dm644 packaging/systemd/nm-tunnel-fakeip-guard.service \
+        "$pkgdir/usr/lib/systemd/system/nm-tunnel-fakeip-guard.service"
     install -Dm644 LICENSE-MIT LICENSE-APACHE -t \
         "$pkgdir/usr/share/licenses/network-manager-tunnel"
     install -Dm644 packaging/licenses/{Open-Sans-OFL,Noto-OFL,lwIP-COPYING}.txt -t \

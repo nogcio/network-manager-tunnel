@@ -46,9 +46,9 @@ impl App {
     pub(super) fn can_disconnect(&self) -> bool {
         #[cfg(all(feature = "preview", debug_assertions))]
         if let Some(preview) = &self.preview {
-            return !self.busy && preview.disconnect_enabled();
+            return !self.operations.busy() && preview.disconnect_enabled();
         }
-        !self.busy && self.snapshot.as_ref().is_some_and(|s| {
+        !self.operations.busy() && self.snapshot.as_ref().is_some_and(|s| {
             matches!(s.active.as_slice(), [active] if active.state() != ConnectionState::Disconnecting)
         })
     }
@@ -60,7 +60,7 @@ impl App {
         self.snapshot.as_ref().map_or(0, |s| s.active.len())
     }
     pub(super) fn can_connect(&self) -> bool {
-        !self.busy
+        !self.operations.busy()
             && self.snapshot.as_ref().is_some_and(|s| {
                 s.backend_registered
                     && s.active.is_empty()
@@ -70,38 +70,38 @@ impl App {
                         .is_some_and(|selected| s.profiles.contains(selected))
             })
     }
-    pub(super) fn connection_title(&self) -> &'static str {
+    pub(super) fn connection_title(&self) -> String {
         #[cfg(all(feature = "preview", debug_assertions))]
         if let Some(preview) = &self.preview {
             return preview.connection_title();
         }
-        if self.busy
-            && let Some(intent) = &self.control
+        if self.operations.busy()
+            && let Some(intent) = self.operations.control()
         {
             return match intent {
-                Intent::Connect(_) => "Requesting connection…",
-                Intent::Disconnect(_) => "Requesting disconnect…",
+                Intent::Connect(_) => crate::i18n::fl!("requesting-connection"),
+                Intent::Disconnect(_) => crate::i18n::fl!("requesting-disconnect"),
             };
         }
         let Some(snapshot) = &self.snapshot else {
             return if self.nm_error.is_some() {
-                "NetworkManager unavailable"
+                crate::i18n::fl!("nm-unavailable")
             } else {
-                "Checking NetworkManager…"
+                crate::i18n::fl!("checking-nm")
             };
         };
         match snapshot.active.as_slice() {
-            [] => "Disconnected",
+            [] => crate::i18n::fl!("disconnected"),
             [active] => match active.state() {
-                ConnectionState::Connecting => "Connecting…",
-                ConnectionState::Connected => "Connected",
-                ConnectionState::Disconnecting => "Disconnecting…",
-                ConnectionState::Unknown => "Unknown connection state",
+                ConnectionState::Connecting => crate::i18n::fl!("connecting"),
+                ConnectionState::Connected => crate::i18n::fl!("connected"),
+                ConnectionState::Disconnecting => crate::i18n::fl!("disconnecting"),
+                ConnectionState::Unknown => crate::i18n::fl!("unknown-connection-state"),
             },
-            _ => "Multiple VPN connections",
+            _ => crate::i18n::fl!("multiple-connections"),
         }
     }
-    pub(super) fn connection_hint(&self) -> &str {
+    pub(super) fn connection_hint(&self) -> String {
         #[cfg(all(feature = "preview", debug_assertions))]
         if let Some(preview) = &self.preview {
             return preview.connection_hint();
@@ -109,59 +109,56 @@ impl App {
         match self.snapshot.as_ref() {
             Some(snapshot) if !snapshot.active.is_empty() => {
                 if snapshot.active.len() == 1 {
-                    snapshot.active[0].profile().name()
+                    snapshot.active[0].profile().name().to_owned()
                 } else {
-                    "Manage the individual connections in NetworkManager."
+                    crate::i18n::fl!("manage-in-nm")
                 }
             }
-            Some(snapshot) if !snapshot.backend_registered => "VPN backend unavailable",
-            Some(_) => "",
-            None if self.nm_error.is_some() => "Could not read NetworkManager state.",
-            None => "",
+            Some(snapshot) if !snapshot.backend_registered => {
+                crate::i18n::fl!("backend-unavailable")
+            }
+            Some(_) => String::new(),
+            None if self.nm_error.is_some() => crate::i18n::fl!("nm-read-failed"),
+            None => String::new(),
         }
     }
     pub(super) fn connection_update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Poll => {
-                if self.busy || self.monitor_pending {
+                if self.operations.busy() && !self.waiting_for_delete() {
                     return Task::none();
                 }
-                self.monitor_pending = true;
-                let epoch = self.epoch;
+                let Some(ticket) = self.reads.begin_nm() else {
+                    return Task::none();
+                };
                 return cosmic::task::future(async move {
-                    Message::Observed(epoch, nm_tunnel_client::snapshot().await)
+                    Message::Observed(ticket, nm_tunnel_client::snapshot().await)
                 });
             }
-            Message::Observed(epoch, result) => {
-                self.monitor_pending = false;
-                if epoch != self.epoch {
+            Message::Observed(ticket, result) => {
+                if !self.reads.finish_nm(ticket) {
                     return Task::none();
                 }
                 match result {
                     Ok(snapshot) => {
-                        let outcome = self.control.as_ref().and_then(|intent| {
-                            intent.observe(
-                                snapshot
-                                    .active
-                                    .iter()
-                                    .map(|a| (a.profile().id(), a.state())),
-                            )
-                        });
+                        let outcome = self.operations.observe(
+                            snapshot
+                                .active
+                                .iter()
+                                .map(|a| (a.profile().id(), a.state())),
+                        );
                         match outcome {
                             Some(Outcome::Failed) => {
                                 self.notice = Some(Notice::Error);
-                                self.status = "The requested VPN is no longer active. Activation may have failed; the network guard can remain closed. No retry or guard removal was performed.".into();
-                                self.control = None;
+                                self.status = crate::i18n::fl!("vpn-ended-status");
                             }
                             Some(Outcome::Connected) => {
                                 self.notice = Some(Notice::Info);
-                                self.status = "NetworkManager reports the VPN connected.".into();
-                                self.control = None;
+                                self.status = crate::i18n::fl!("vpn-connected-status");
                             }
                             Some(Outcome::Disconnected) => {
                                 self.notice = Some(Notice::Info);
-                                self.status = "NetworkManager reports the VPN disconnected. This does not remove a retained crash guard.".into();
-                                self.control = None;
+                                self.status = crate::i18n::fl!("vpn-disconnected-status");
                             }
                             _ => {}
                         }
@@ -177,6 +174,7 @@ impl App {
                         });
                         self.snapshot = Some(snapshot);
                         self.nm_error = None;
+                        return self.deletion_observed();
                     }
                     Err(error) => {
                         self.snapshot = None;
@@ -193,10 +191,12 @@ impl App {
             }
             Message::Connect if self.can_connect() => {
                 if let Some(profile) = self.saved_selected.clone() {
-                    self.begin_control(
+                    if !self.begin_control(
                         Intent::Connect(profile.id().to_owned()),
-                        "Requesting VPN activation from NetworkManager…",
-                    );
+                        &crate::i18n::fl!("requesting-nm-activation"),
+                    ) {
+                        return Task::none();
+                    }
                     return cosmic::task::future(async move {
                         Message::Controlled(nm_tunnel_client::activate(&profile).await)
                     });
@@ -211,28 +211,25 @@ impl App {
                         _ => None,
                     });
                 if let Some(active) = active {
-                    self.begin_control(
+                    if !self.begin_control(
                         Intent::Disconnect(active.profile().id().to_owned()),
-                        "Requesting VPN disconnection from NetworkManager…",
-                    );
+                        &crate::i18n::fl!("requesting-nm-disconnection"),
+                    ) {
+                        return Task::none();
+                    }
                     return cosmic::task::future(async move {
                         Message::Controlled(nm_tunnel_client::deactivate(&active).await)
                     });
                 }
             }
             Message::Controlled(result) => {
-                self.busy = false;
-                self.notice = Some(if result.is_ok() {
-                    Notice::Info
-                } else {
-                    Notice::Error
-                });
-                if result.is_err() {
-                    self.control = None;
+                if !self.operations.finish_control(result.is_ok()) {
+                    return Task::none();
                 }
+                self.notice = result.as_ref().err().map(|_| Notice::Error);
                 self.status = match result {
-                    Ok(()) => "Request accepted. The connection state above is read from NetworkManager; method completion is not tunnel readiness or cleanup.".into(),
-                    Err(error) => error.to_string(),
+                    Ok(()) => crate::i18n::fl!("waiting-nm-status"),
+                    Err(error) => crate::i18n::client_error(error),
                 };
                 // Disallow another request until a fresh observation, including
                 // after ambiguous timeout. Nothing is automatically retried.
@@ -243,13 +240,15 @@ impl App {
         }
         Task::none()
     }
-    pub(super) fn begin_control(&mut self, intent: Intent, status: &str) {
+    pub(super) fn begin_control(&mut self, intent: Intent, status: &str) -> bool {
+        if !self.operations.begin_control(intent) {
+            return false;
+        }
         // Do not show a previous attempt's rates while changing connection state.
         self.traffic.observe(Ok(None));
-        self.control = Some(intent);
-        self.busy = true;
-        self.epoch = self.epoch.wrapping_add(1);
+        self.reads.invalidate();
         self.notice = None;
         self.status = status.into();
+        true
     }
 }

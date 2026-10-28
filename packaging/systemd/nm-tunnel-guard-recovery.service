@@ -1,0 +1,20 @@
+[Unit]
+Description=NetworkManager Tunnel automatic session guard recovery
+After=dbus.socket
+Requires=dbus.socket
+StartLimitIntervalSec=0
+
+[Service]
+Type=dbus
+BusName=org.freedesktop.NetworkManager.tunnel.Recovery
+ExecStart=/usr/libexec/nm-tunnel-service --guard-recovery
+Environment=NM_TUNNEL_RECOVERY_SYSTEMD=1
+Restart=on-failure
+RestartSec=1s
+User=root
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK

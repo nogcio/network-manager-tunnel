@@ -116,6 +116,25 @@ impl Drop for Flow {
     }
 }
 
+impl nm_tunnel_dataplane::runtime::Observer for Meter {
+    type Flow = Flow;
+    fn packet(&self, upload: bool, bytes: usize) {
+        self.packet(upload, bytes);
+    }
+    fn dropped(&self) {
+        self.dropped();
+    }
+    fn flow(self: &Arc<Self>, tcp: bool) -> Flow {
+        self.flow(tcp)
+    }
+}
+
+impl nm_tunnel_dataplane::runtime::Flow for Flow {
+    fn failed(&self) {
+        self.failed();
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Report {
     stage: u8,
@@ -124,7 +143,7 @@ pub(crate) struct Report {
 
 /// Best effort datagrams on a distinct inherited FD: never wait on the FD broker
 /// or backpressure packet processing. Lost samples are reflected in sample age.
-pub(crate) async fn publish(socket: UnixDatagram, meter: Arc<Meter>) {
+pub(crate) async fn publish(socket: Arc<UnixDatagram>, meter: Arc<Meter>) {
     let mut timer = tokio::time::interval(std::time::Duration::from_secs(1));
     timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -277,6 +296,19 @@ impl Telemetry {
         let mut buffer = [0; 2048];
         loop {
             let length = socket.recv(&mut buffer).await?;
+            if let Ok(report) = serde_json::from_slice::<crate::health::Report>(&buffer[..length]) {
+                if report.health && report.stage <= 14 {
+                    eprintln!(
+                        "VPN health: failures={}, stage={}, elapsed_ms={}, reason={:?}, fatal={}; session protection retained.",
+                        report.failures,
+                        report.stage,
+                        report.elapsed_ms,
+                        report.failure,
+                        report.fatal,
+                    );
+                }
+                continue;
+            }
             // Invalid/oversized telemetry is discarded, not a VPN failure.
             if let Ok(report) = serde_json::from_slice(&buffer[..length]) {
                 self.observe(report);

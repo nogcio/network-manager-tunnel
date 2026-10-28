@@ -1,0 +1,18 @@
+[package]
+name = "nm-tunnel-schema"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[package.metadata.nm-tunnel]
+layer = "contract"
+
+[dependencies]
+nm-tunnel-profile.workspace = true
+secrecy.workspace = true
+uuid.workspace = true
+zbus.workspace = true
+
+[lints]
+workspace = true

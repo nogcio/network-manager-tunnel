@@ -1,9 +1,10 @@
 //! Subscription-only COSMIC UI using the toolkit's native settings/list controls.
+use crate::i18n::fl;
 use cosmic::{ApplicationExt, Core, Element, app::Task, executor};
 use nm_tunnel_client::{ClientError, SavedProfile, Snapshot};
-use nm_tunnel_subscription::{Subscription, SubscriptionError, fetch_subscription, validate_url};
-use secrecy::{ExposeSecret, SecretString};
-use std::collections::{BTreeMap, HashSet};
+use nm_tunnel_subscription::{
+    Subscription, SubscriptionError, SubscriptionFormat, fetch_subscription_format,
+};
 
 #[cfg(test)]
 #[path = "tests.rs"]
@@ -21,6 +22,37 @@ mod traffic;
 #[path = "import.rs"]
 mod import;
 
+#[path = "options.rs"]
+mod options;
+pub(crate) use options::DnsChoice;
+
+#[path = "catalog.rs"]
+mod catalog;
+
+#[path = "operations.rs"]
+mod operations;
+
+#[path = "reads.rs"]
+mod reads;
+
+#[path = "recovery.rs"]
+mod recovery;
+
+#[path = "download.rs"]
+mod download;
+
+#[path = "navigation.rs"]
+mod navigation;
+
+#[path = "profile_editor.rs"]
+mod profile_editor;
+
+#[path = "subscriptions.rs"]
+mod subscriptions;
+
+#[path = "source_store.rs"]
+mod source_store;
+
 #[cfg(all(feature = "preview", debug_assertions))]
 #[path = "preview.rs"]
 mod preview;
@@ -32,19 +64,20 @@ pub(crate) struct Flags {
 }
 
 impl Flags {
-    pub(crate) fn theme(&self) -> cosmic::Theme {
+    /// Only synthetic previews override the toolkit's live system theme.
+    pub(crate) fn theme_override(&self) -> Option<cosmic::Theme> {
         #[cfg(all(feature = "preview", debug_assertions))]
         if let Some(preview) = &self.preview {
-            return preview.theme.clone();
+            return Some(preview.theme.clone());
         }
-        cosmic::theme::system_preference()
+        None
     }
     pub(crate) fn window_size(&self) -> cosmic::iced::Size {
         #[cfg(all(feature = "preview", debug_assertions))]
         if let Some(preview) = &self.preview {
             return preview.size();
         }
-        cosmic::iced::Size::new(760.0, 780.0)
+        cosmic::iced::Size::new(1024.0, 840.0)
     }
 
     pub(crate) fn from_env() -> Result<Self, &'static str> {
@@ -63,29 +96,26 @@ impl Flags {
 
 pub(crate) struct App {
     core: Core,
-    source: SecretString,
-    subscription: Option<Subscription>,
-    selected: Option<usize>,
-    // Only additions made from the current loaded list; NM remains authoritative.
-    added: BTreeMap<usize, String>,
-    profile_page: usize,
-    profile_search: String,
-    uncertain: bool,
-    busy: bool, // An NM mutation, independent of subscription HTTP ownership.
-    fetching: bool,
-    load_error: Option<SubscriptionError>,
+    download: download::Download,
+    catalog: catalog::Catalog,
+    operations: operations::Operations,
+    options: options::ProfileOptions,
+    sources: subscriptions::Sources,
     status: String,
     notice: Option<Notice>,
     snapshot: Option<Snapshot>,
     nm_error: Option<ClientError>,
     saved_selected: Option<SavedProfile>,
-    monitor_pending: bool,
-    epoch: u64,
-    control: Option<connection::Intent>,
+    reads: reads::Reads,
     page: Page,
+    navigation: navigation::Navigation,
+    editor: Option<profile_editor::Editor>,
+    profile_save: Option<operations::StorageTicket>,
+    deletion: Option<profile_editor::Deletion>,
     saved_search: String,
     details: Option<Details>,
     traffic: traffic::Traffic,
+    recovery: recovery::Recovery,
     ticks: u8,
     #[cfg(all(feature = "preview", debug_assertions))]
     preview: Option<preview::Preview>,
@@ -98,10 +128,17 @@ pub(super) enum Page {
 }
 
 impl Page {
-    fn header_title(self) -> &'static str {
+    fn scroll_id(self) -> &'static str {
         match self {
-            Self::Connections => "NetworkManager Tunnel",
-            Self::Import => "Import subscription",
+            Self::Connections => "connections-page",
+            Self::Import => "import-page",
+        }
+    }
+
+    fn title(self) -> String {
+        match self {
+            Self::Connections => fl!("connections"),
+            Self::Import => fl!("subscriptions"),
         }
     }
 }
@@ -120,7 +157,10 @@ enum Notice {
 
 #[derive(Clone)]
 pub(crate) enum Message {
+    Profile(profile_editor::Action),
+    Subscription(subscriptions::Action),
     Navigate(Page),
+    PageScrolled(Page, cosmic::iced::widget::scrollable::AbsoluteOffset),
     SearchSaved(String),
     ConnectProfile(String),
     AddProfile(usize),
@@ -128,12 +168,22 @@ pub(crate) enum Message {
     CloseDetails,
     Tick,
     UsageObserved(
-        u64,
+        reads::Ticket,
         Result<Option<nm_tunnel_client::UsageSnapshot>, nm_tunnel_client::UsageError>,
     ),
+    RecoveryObserved(
+        reads::Ticket,
+        Result<Option<nm_tunnel_client::RecoveryStatus>, nm_tunnel_client::RecoveryError>,
+    ),
     Source(String),
+    FetchComplete(bool),
+    DnsChoice(DnsChoice),
+    ManualDns(String),
+    LanBypass(bool),
+    DnsInterception(bool),
+    FakeIp(bool),
     Load,
-    Loaded(Result<Subscription, SubscriptionError>),
+    Loaded(download::Ticket, Result<Subscription, SubscriptionError>),
     Select(usize),
     ProfilePage(usize),
     SearchProfiles(String),
@@ -141,7 +191,7 @@ pub(crate) enum Message {
     Prepare,
     Prepared(Result<SavedProfile, ClientError>),
     Poll,
-    Observed(u64, Result<Snapshot, ClientError>),
+    Observed(reads::Ticket, Result<Snapshot, ClientError>),
     SavedSelected(String),
     Connect,
     Disconnect,
@@ -175,28 +225,26 @@ impl cosmic::Application for App {
     fn init(core: Core, _flags: Flags) -> (Self, Task<Message>) {
         let mut app = Self {
             core,
-            source: SecretString::from(String::new()),
-            subscription: None,
-            selected: None,
-            added: BTreeMap::new(),
-            profile_page: 0,
-            profile_search: String::new(),
-            uncertain: false,
-            busy: false,
-            fetching: false,
-            load_error: None,
-            status: "Add a subscription to load your profiles.".into(),
+            download: download::Download::default(),
+            catalog: catalog::Catalog::default(),
+            operations: operations::Operations::default(),
+            options: options::ProfileOptions::default(),
+            sources: subscriptions::Sources::default(),
+            status: fl!("initial-status"),
             notice: None,
             snapshot: None,
             nm_error: None,
             saved_selected: None,
-            monitor_pending: false,
-            epoch: 0,
-            control: None,
+            reads: reads::Reads::default(),
             page: Page::Connections,
+            navigation: navigation::Navigation::default(),
+            editor: None,
+            profile_save: None,
+            deletion: None,
             saved_search: String::new(),
             details: None,
             traffic: traffic::Traffic::default(),
+            recovery: recovery::Recovery::default(),
             ticks: 0,
             #[cfg(all(feature = "preview", debug_assertions))]
             preview: None,
@@ -206,12 +254,16 @@ impl cosmic::Application for App {
             preview.seed(&mut app);
             app.preview = Some(preview);
         }
-        // One title in the start slot; leave the toolkit's center title empty.
+        app.navigation.select(app.page);
+        // Core owns the CSD/NavHandle; page titles belong in the content pane.
+        // The fixed app label uses header_start on both Wayland and X11. Leaving
+        // a second native title here duplicates branding on the X11 backend.
         app.set_header_title(String::new());
+        app.core.window.context_is_overlay = false;
         let task = app
             .core
             .main_window_id()
-            .map(|id| app.set_window_title("NetworkManager Tunnel".into(), id))
+            .map(|id| app.set_window_title("Tunnel".into(), id))
             .unwrap_or_else(Task::none);
         (
             app,
@@ -219,6 +271,9 @@ impl cosmic::Application for App {
                 task,
                 cosmic::task::future(async { Message::Poll }),
                 cosmic::task::future(async { Message::Tick }),
+                cosmic::task::future(async {
+                    Message::Subscription(subscriptions::Action::Restore(false))
+                }),
             ]),
         )
     }
@@ -228,10 +283,18 @@ impl cosmic::Application for App {
         if self.preview.is_some() {
             return preview::update(self, message);
         }
-        if self.busy
+        if let Message::Profile(action) = message {
+            let task = self.profile_update(action);
+            return Task::batch([task, self.persist_sources()]);
+        }
+        if let Message::Subscription(action) = message {
+            let task = self.subscription_update(action);
+            return Task::batch([task, self.persist_sources()]);
+        }
+        if self.operations.busy()
             && !matches!(
                 message,
-                Message::Loaded(_)
+                Message::Loaded(_, _)
                     | Message::Prepared(_)
                     | Message::Controlled(_)
                     | Message::Observed(_, _)
@@ -239,11 +302,13 @@ impl cosmic::Application for App {
                     | Message::ProfilePage(_)
                     | Message::DismissNotice
                     | Message::Navigate(_)
+                    | Message::PageScrolled(_, _)
                     | Message::SearchSaved(_)
                     | Message::ShowDetails(_)
                     | Message::CloseDetails
                     | Message::Tick
                     | Message::UsageObserved(_, _)
+                    | Message::RecoveryObserved(_, _)
             )
         {
             return Task::none();
@@ -251,46 +316,47 @@ impl cosmic::Application for App {
         match message {
             Message::Navigate(page) => {
                 self.page = page;
+                self.editor = None;
+                self.sources.settings = false;
+                self.navigation.select(page);
                 self.details = None;
                 self.core.set_show_context(false);
-                let scroll = self.reset_page_scroll();
-                let focus = if page == Page::Import {
-                    cosmic::widget::text_input::focus(cosmic::widget::Id::new("subscription-url"))
-                } else {
-                    Task::none()
-                };
-                return Task::batch([scroll, focus]);
+                // Primary navigation preserves each pane's scroll/search/draft.
+                return self.restore_page_scroll();
             }
+            Message::PageScrolled(page, offset) => self.navigation.remember_scroll(page, offset),
             Message::SearchSaved(value) => self.saved_search = value.chars().take(128).collect(),
             Message::ShowDetails(profile) => {
+                self.sources.settings = false;
                 self.details = Some(profile.map_or(Details::Connection, Details::Profile));
                 self.core.set_show_context(true);
             }
             Message::CloseDetails => {
                 self.details = None;
                 self.core.set_show_context(false);
+                return self.restore_page_scroll();
             }
             Message::ConnectProfile(id) => {
                 let _ = self.connection_update(Message::SavedSelected(id));
                 return self.connection_update(Message::Connect);
             }
             Message::AddProfile(index) => {
-                if self.fetching || self.uncertain {
+                if self.download.pending().is_some()
+                    || self.operations.uncertain()
+                    || !self.catalog.admitted
+                    || self.sources.screen == subscriptions::Screen::Add
+                {
                     return Task::none();
                 }
                 // Reject stale/out-of-range rows without adding an older selection.
-                if !self
-                    .subscription
-                    .as_ref()
-                    .and_then(|s| s.entries().get(index))
-                    .is_some_and(|e| e.profile().is_ok())
-                {
+                if self.catalog.profile(index).is_none() {
                     return Task::none();
                 }
                 let _ = self.update(Message::Select(index));
                 return self.update(Message::Prepare);
             }
             Message::Tick => {
+                let deletion = self.deletion_observed();
                 self.ticks = (self.ticks + 1) % 3;
                 let usage = self.poll_usage();
                 let nm = if self.ticks == 1 {
@@ -298,20 +364,24 @@ impl cosmic::Application for App {
                 } else {
                     Task::none()
                 };
-                return Task::batch([usage, nm]);
+                let recovery = self.poll_recovery();
+                return Task::batch([usage, nm, recovery, deletion]);
             }
-            Message::UsageObserved(epoch, result) => {
-                self.traffic.pending = false;
-                if epoch == self.epoch {
+            Message::UsageObserved(ticket, result) => {
+                if self.reads.finish_usage(ticket) {
                     self.traffic.observe(result);
+                }
+            }
+            Message::RecoveryObserved(ticket, result) => {
+                if self.reads.finish_recovery(ticket) {
+                    self.recovery.observe(result);
                 }
             }
             Message::DismissNotice => {
                 self.notice = None;
             }
             Message::SearchProfiles(value) => {
-                self.profile_search = value.chars().take(128).collect();
-                self.profile_page = 0;
+                self.catalog.search(value);
             }
             #[cfg(all(feature = "preview", debug_assertions))]
             Message::Frame(_) | Message::Captured(_) => {}
@@ -324,109 +394,172 @@ impl cosmic::Application for App {
                 return self.connection_update(message);
             }
             Message::Source(value) => {
-                if self.fetching {
+                if matches!(
+                    self.sources.screen,
+                    subscriptions::Screen::Nodes | subscriptions::Screen::Review
+                ) {
                     return Task::none();
                 }
-                self.load_error = None;
+                if !self.download.edit_source(value) {
+                    return Task::none();
+                }
+                self.catalog.invalidate();
                 self.notice = None;
-                self.source = SecretString::from(value);
-                self.status =
-                    "Press Load to fetch this URL. The loaded profile list is unchanged.".into();
+                self.status = fl!("source-edited-status");
+            }
+            Message::FetchComplete(complete) => {
+                if matches!(
+                    self.sources.screen,
+                    subscriptions::Screen::Nodes | subscriptions::Screen::Review
+                ) {
+                    return Task::none();
+                }
+                let format = if complete {
+                    SubscriptionFormat::Complete
+                } else {
+                    SubscriptionFormat::NodesOnly
+                };
+                if !self.download.choose_format(format) {
+                    return Task::none();
+                }
+                self.catalog.invalidate();
+                self.status = fl!("reload-format-status");
+            }
+            Message::DnsChoice(choice) => self.options.dns_choice = choice,
+            Message::ManualDns(value) => self.options.manual_dns = value.chars().take(64).collect(),
+            Message::LanBypass(value) => {
+                if !value
+                    || !self
+                        .catalog
+                        .subscription
+                        .as_ref()
+                        .is_some_and(|list| list.native_policy_notice().is_some())
+                {
+                    self.options.lan_bypass = value;
+                }
+            }
+            Message::DnsInterception(value) => {
+                self.options.intercept(value);
+            }
+            Message::FakeIp(value) => {
+                self.options.fake_ip(value);
             }
             Message::Load => {
-                if self.fetching {
+                if matches!(
+                    self.sources.screen,
+                    subscriptions::Screen::Nodes | subscriptions::Screen::Review
+                ) {
                     return Task::none();
                 }
-                if let Err(error) = validate_url(self.source.expose_secret()) {
-                    self.load_error = Some(error);
+                if self.download.pending().is_some() {
                     return Task::none();
                 }
-                self.fetching = true;
-                self.load_error = None;
-                let source = self.source.clone();
+                self.catalog.invalidate();
+                let Some((ticket, source, format)) = self.download.begin() else {
+                    return Task::none();
+                };
                 return cosmic::task::future(async move {
-                    Message::Loaded(fetch_subscription(source).await)
+                    Message::Loaded(ticket, fetch_subscription_format(source, format).await)
                 });
             }
-            Message::Loaded(result) => {
-                self.fetching = false;
-                self.load_error = None;
+            Message::Loaded(ticket, result) => {
+                let Some(result) = self.download.finish(ticket, result) else {
+                    return Task::none();
+                };
+                if self.sources.updating() {
+                    self.source_downloaded(result);
+                    return Task::none();
+                }
+                let adding = std::mem::take(&mut self.sources.adding);
                 match result {
                     Ok(subscription) => {
-                        self.selected = subscription
-                            .entries()
-                            .iter()
-                            .position(|entry| entry.profile().is_ok());
-                        self.subscription = Some(subscription);
-                        self.added.clear();
-                        self.profile_page = 0;
+                        self.catalog.admit(subscription);
+                        if adding {
+                            return self.subscription_update(subscriptions::Action::Save);
+                        }
                         // An ambiguous previous save is not cleared by an unrelated HTTP refresh.
                     }
-                    Err(error) => {
-                        self.load_error = Some(error);
+                    Err(_) => {
+                        self.catalog.invalidate();
                     }
                 }
             }
             Message::Select(index) => {
-                if self
-                    .subscription
-                    .as_ref()
-                    .and_then(|list| list.entries().get(index))
-                    .is_some_and(|entry| entry.profile().is_ok())
-                {
-                    self.selected = Some(index);
+                if self.catalog.select(index) {
                     self.notice = None;
-                    self.status = "Profile selected. No connection request was made.".into();
+                    self.status = fl!("profile-selected-status");
                 }
             }
             Message::ProfilePage(page) => {
                 if page < self.matching_profiles().len().div_ceil(view::PAGE_SIZE) {
-                    self.profile_page = page;
+                    self.catalog.page = page;
                     return self.reset_page_scroll();
                 }
             }
             Message::Prepare => {
-                if self.fetching || self.uncertain || self.selected_added() {
+                if self.download.pending().is_some()
+                    || self.operations.uncertain()
+                    || self.selected_added()
+                    || !self.catalog.admitted
+                    || self.sources.screen == subscriptions::Screen::Add
+                {
                     return Task::none();
                 }
-                let profile = self
-                    .subscription
-                    .as_ref()
-                    .and_then(|list| self.selected.and_then(|index| list.entries().get(index)))
-                    .and_then(|entry| entry.profile().ok())
-                    .cloned();
+                let profile = self.catalog.selected_profile().cloned();
                 if let Some(profile) = profile {
+                    let profile = match self.profile_with_dns(&profile) {
+                        Ok(profile) => profile,
+                        Err(error) => {
+                            self.notice = Some(Notice::Error);
+                            self.status = crate::i18n::dns_error(error);
+                            return Task::none();
+                        }
+                    };
                     // A new explicit action owns feedback; an earlier accepted
                     // control must not overwrite this save's eventual failure.
-                    self.control = None;
+                    let Some(index) = self.catalog.selected else {
+                        return Task::none();
+                    };
+                    if !self.operations.begin_add(index) {
+                        return Task::none();
+                    }
                     self.notice = None;
-                    self.busy = true;
-                    self.epoch = self.epoch.wrapping_add(1);
-                    self.status = "Adding the selected profile to NetworkManager…".into();
+                    self.reads.invalidate();
+                    self.status = fl!("saving-profile-status");
                     return cosmic::task::future(async move {
                         Message::Prepared(nm_tunnel_client::save_profile(profile).await)
                     });
                 }
             }
             Message::Prepared(result) => {
-                self.busy = false;
+                let Some(index) = self.operations.finish_add(result.as_ref().err().copied()) else {
+                    return Task::none();
+                };
                 match result {
                     Ok(saved) => {
                         self.notice = Some(Notice::Info);
-                        if let Some(index) = self.selected {
-                            self.added.insert(index, saved.id().to_owned());
+                        self.catalog.added.insert(index, saved.id().to_owned());
+                        if let Some(label) = self
+                            .catalog
+                            .subscription
+                            .as_ref()
+                            .and_then(|list| list.entries().get(index))
+                            .map(|entry| entry.name().to_owned())
+                        {
+                            self.sources.added(index, saved.id().to_owned(), label);
                         }
-                        self.status = "Saved in NetworkManager, including system-stored credentials. Autoconnect is off; no connection was started.".into();
+                        self.status = fl!("profile-saved-status");
                         self.saved_selected = Some(saved);
                     }
                     Err(error) => {
-                        self.uncertain = error == ClientError::Timeout;
-                        self.notice = (!self.uncertain).then_some(Notice::Error);
-                        self.status = error.to_string();
+                        self.notice = (!self.operations.uncertain()).then_some(Notice::Error);
+                        self.status = crate::i18n::client_error(error);
                     }
                 }
-                return self.connection_update(Message::Poll);
+                let poll = self.connection_update(Message::Poll);
+                return Task::batch([poll, self.persist_sources()]);
             }
+            Message::Profile(_) | Message::Subscription(_) => {}
         }
         Task::none()
     }
@@ -451,61 +584,90 @@ impl cosmic::Application for App {
         self.page()
     }
 
-    fn header_start(&self) -> Vec<Element<'_, Message>> {
-        let mut elements = Vec::new();
-        if self.page == Page::Import {
-            elements.push(
-                cosmic::widget::button::icon(cosmic::widget::icon::from_name(
-                    "go-previous-symbolic",
-                ))
-                .tooltip("Back to connections")
-                .name("Back to connections")
-                .on_press(Message::Navigate(Page::Connections))
-                .into(),
-            );
-        }
-        elements.push(
-            cosmic::widget::text::heading(self.page.header_title())
-                .wrapping(cosmic::iced::core::text::Wrapping::None)
-                .ellipsize(cosmic::iced::core::text::Ellipsize::End(
-                    cosmic::iced::core::text::EllipsizeHeightLimit::Lines(1),
-                ))
-                .into(),
-        );
-        elements
+    fn nav_model(&self) -> Option<&cosmic::widget::nav_bar::Model> {
+        Some(&self.navigation.model)
     }
 
-    fn header_end(&self) -> Vec<Element<'_, Message>> {
-        match self.page {
-            Page::Connections => vec![
-                cosmic::widget::button::standard("Import subscription…")
-                    .on_press(Message::Navigate(Page::Import))
-                    .into(),
-            ],
-            Page::Import => Vec::new(),
-        }
+    fn header_start(&self) -> Vec<Element<'_, Message>> {
+        // The pinned toolkit's center/title slots are absent in native captures.
+        // Keep branding visible in its standard start slot, without custom CSD.
+        vec![cosmic::widget::text::heading("Tunnel").into()]
+    }
+
+    fn on_nav_select(&mut self, id: cosmic::widget::nav_bar::Id) -> Task<Message> {
+        self.navigation
+            .page(id)
+            .map_or_else(Task::none, |page| self.update(Message::Navigate(page)))
     }
 
     fn context_drawer(&self) -> Option<cosmic::app::context_drawer::ContextDrawer<'_, Message>> {
         self.details_drawer()
     }
 
+    fn dialog(&self) -> Option<Element<'_, Message>> {
+        #[cfg(all(feature = "preview", debug_assertions))]
+        if let Some(dialog) = self.preview.as_ref().and_then(|preview| preview.dialog()) {
+            return Some(dialog);
+        }
+        self.delete_dialog().or_else(|| self.source_dialog())
+    }
+
     fn on_escape(&mut self) -> Task<Message> {
-        self.update(if self.details.is_some() {
-            Message::CloseDetails
-        } else {
-            Message::Navigate(Page::Connections)
-        })
+        if self.sources.removing {
+            return self.subscription_update(subscriptions::Action::CancelRemove);
+        }
+        if self.sources.settings {
+            return self.subscription_update(subscriptions::Action::CloseSettings);
+        }
+        if matches!(self.deletion, Some(profile_editor::Deletion::Confirm(_))) {
+            return self.profile_update(profile_editor::Action::CancelDelete);
+        }
+        if self.editor.is_some() {
+            return self.profile_update(profile_editor::Action::Cancel);
+        }
+        if self.details.is_some() {
+            return self.update(Message::CloseDetails);
+        }
+        if self.page == Page::Import && self.sources.screen != subscriptions::Screen::List {
+            return self.subscription_update(subscriptions::Action::Back);
+        }
+        if self.core.is_condensed() && self.core.nav_bar_active() {
+            self.core.nav_bar_toggle_condensed();
+        }
+        Task::none()
     }
 }
 
 impl App {
-    fn reset_page_scroll(&self) -> Task<Message> {
+    fn synthetic_preview(&self) -> bool {
+        #[cfg(all(feature = "preview", debug_assertions))]
+        {
+            self.preview.is_some()
+        }
+        #[cfg(not(all(feature = "preview", debug_assertions)))]
+        {
+            false
+        }
+    }
+    fn restore_page_scroll(&self) -> Task<Message> {
+        if self.page == Page::Import {
+            return self.restore_source_scroll();
+        }
+        let offset = self.navigation.scroll(self.page);
+        cosmic::iced::widget::scrollable::scroll_to(
+            cosmic::widget::Id::new(self.page.scroll_id()),
+            cosmic::iced::widget::scrollable::AbsoluteOffset {
+                x: Some(offset.x),
+                y: Some(offset.y),
+            },
+        )
+    }
+
+    fn reset_page_scroll(&mut self) -> Task<Message> {
+        self.navigation
+            .remember_scroll(self.page, Default::default());
         cosmic::iced::widget::scrollable::snap_to(
-            cosmic::widget::Id::new(match self.page {
-                Page::Connections => "connections-page",
-                Page::Import => "import-page",
-            }),
+            cosmic::widget::Id::new(self.page.scroll_id()),
             cosmic::iced::widget::scrollable::RelativeOffset {
                 x: Some(0.0),
                 y: Some(0.0),
@@ -513,12 +675,10 @@ impl App {
         )
     }
     fn selected_added(&self) -> bool {
-        self.selected
-            .is_some_and(|index| self.added.contains_key(&index))
+        self.catalog.selected_added()
     }
 
     fn reconcile_added<'a>(&mut self, profiles: impl Iterator<Item = &'a str>) {
-        let ids: HashSet<_> = profiles.collect();
-        self.added.retain(|_, id| ids.contains(id.as_str()));
+        self.catalog.reconcile(profiles);
     }
 }

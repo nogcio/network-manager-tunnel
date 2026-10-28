@@ -1,0 +1,28 @@
+[package]
+name = "nm-tunnel-dataplane"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[package.metadata.nm-tunnel]
+layer = "engine"
+
+[dependencies]
+nm-tunnel-profile.workspace = true
+nm-tunnel-engine.workspace = true
+lwip.workspace = true
+async-trait = "0.1"
+tokio = { workspace = true, features = ["io-util", "sync"] }
+uuid.workspace = true
+futures-util = { version = "0.3", features = ["sink"] }
+hickory-proto = { version = "=0.26.3", default-features = false, features = ["std"] }
+tokio-util = { version = "=0.7.20", features = ["codec"] }
+serde_json = "1"
+meow-dns = { version = "=0.26.1", git = "https://github.com/nogcio/meow-rs", rev = "fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21", default-features = false }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "sync"] }
+
+[lints]
+workspace = true

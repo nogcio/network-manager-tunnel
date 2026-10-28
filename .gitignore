@@ -1,4 +1,5 @@
 /target/
+/frontends/cosmic/target/
 /.codebase-index/index/
 /opencode.json
 /opencode.jsonc

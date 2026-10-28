@@ -115,6 +115,16 @@ async fn malformed_and_backpressured_datagrams_do_not_block_the_data_plane() -> 
         let (sender, receiver) = UnixDatagram::pair()?;
         sender.send(b"invalid").await?;
         sender.send(&[b'x'; 3000]).await?;
+        let health = crate::health::Report {
+            health: true,
+            failures: 1,
+            stage: 12,
+            elapsed_ms: 15_000,
+            failure: Some(crate::health::Failure::Deadline),
+            fatal: false,
+        };
+        sender.send(&serde_json::to_vec(&health).map_err(io::Error::other)?).await?;
+        // A diagnostic must not become a traffic sample or alter lifecycle state.
         let report = Report {
             stage: 7,
             counters: Counters {
@@ -128,7 +138,7 @@ async fn malformed_and_backpressured_datagrams_do_not_block_the_data_plane() -> 
         // FIFO datagrams plus a bounded readiness notification, no polling sleeps.
         let received = telemetry.clone();
         let task =
-            crate::activation::AbortTask(tokio::spawn(
+            crate::task::AbortTask(tokio::spawn(
                 async move { received.receive(receiver).await },
             ));
         loop {
@@ -139,12 +149,13 @@ async fn malformed_and_backpressured_datagrams_do_not_block_the_data_plane() -> 
         }
         assert_eq!(telemetry.snapshot().counters.upload_bytes, 123);
         assert_eq!(telemetry.snapshot().history.len(), 1);
+        assert_eq!(telemetry.snapshot().state, "connecting");
         drop(task);
         // A full telemetry socket is a dropped observation, not an async wait.
         let (sender, _unread) = UnixDatagram::pair()?;
         while sender.try_send(b"full").is_ok() {}
         assert!(matches!(sender.try_send(b"full"), Err(error) if error.kind() == io::ErrorKind::WouldBlock));
-        let publisher = tokio::spawn(publish(sender, Arc::new(Meter::default())));
+        let publisher = tokio::spawn(publish(Arc::new(sender), Arc::new(Meter::default())));
         tokio::task::yield_now().await;
         publisher.abort();
         assert!(publisher.await.is_err());

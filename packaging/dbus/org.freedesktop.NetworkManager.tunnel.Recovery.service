@@ -1,0 +1,5 @@
+[D-BUS Service]
+Name=org.freedesktop.NetworkManager.tunnel.Recovery
+Exec=/usr/libexec/nm-tunnel-service --guard-recovery
+User=root
+SystemdService=nm-tunnel-guard-recovery.service

@@ -37,6 +37,34 @@ will be added when the [roadmap](roadmap.md) supplies actual consumers and autho
 
 ## Dependencies and distribution
 
+The COSMIC application-template localization API pattern was consulted at commit
+`97ff759e658922d7f02e708b10cfda421352b100`:
+<https://github.com/pop-os/cosmic-app-template/tree/97ff759e658922d7f02e708b10cfda421352b100>.
+`src/i18n.rs`, `src/main.rs` and `i18n.toml` inform standard desktop-language
+negotiation, embedded Fluent catalogs and fallback-loader initialization. The local
+implementation adds project-specific typed error mapping, checked named arguments,
+catalog contracts and independent locale tests; no template assets or translations
+are imported. English/Russian application translations are project-owned. The
+template uses a generated project-license placeholder, not a different license
+grant for this workspace. The actual localization crates and their original license
+scopes are recorded in [dependency review](dependency-review.md).
+
+sing-box 1.12.0 was consulted as a behavioral reference for domain metadata,
+ordered routing and FakeIP. No sing-box source or dependency is included. Its
+GPL-3.0-or-later terms and additional name/association restriction differ from this
+workspace's license. Versioned references and the independent implementation's
+limits are in [ADR 0010](decisions/0010-tcp-domain-routing.md).
+The complete IPv4 behavior and narrow independently written signature-classifier
+exception are in [ADR 0020](decisions/0020-native-ipv4-source-policy.md) and
+[ADR 0021](decisions/0021-bittorrent-signature-classifier.md). No sing-box source
+was copied. The public RFC 9001 QUIC fixture retains its IETF Trust copyright and
+Simplified BSD notice in [engine fixtures](../crates/engine/tests/fixtures/README.md).
+
+NetworkManager 1.58.0's GPL-2.0-or-later VPN configuration consumer was consulted
+only to verify public D-Bus route layout and never-default semantics. No source
+was copied or linked into the workspace; the service independently emits standard
+NM messages. References are in [ADR 0012](decisions/0012-connected-lan-bypass.md).
+
 Tooling, shared profile/client dependencies and the libcosmic graph are resolved in
 `Cargo.lock`. See [dependency status](dependency-review.md) for maintenance warnings
 and remaining shipping notices; toolkit direction is in [ADR 0003](decisions/0003-cosmic-editor.md).

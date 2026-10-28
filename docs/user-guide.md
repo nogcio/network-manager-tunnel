@@ -9,30 +9,85 @@ the current source UI; an older installed package may have different controls.
 ## First connection
 
 1. Open **NetworkManager Tunnel**. It reads saved and active NM metadata; it does
-   not fetch a subscription, retrieve credentials or connect automatically.
-2. Open **Import subscription…** in the native header, paste your HTTPS
-   subscription into the masked input and press **Load subscription**.
-   The URL and downloaded list stay in memory. Unsupported entries remain visible
+   not fetch a subscription, retrieve VPN credentials or connect automatically.
+2. Open **Subscriptions**, choose **Add subscription**, enter a name and HTTPS
+   URL in the visible field, then confirm **Add subscription** in the bottom footer.
+   The source is checked before it is added; failure creates no profiles.
+   URLs are stored through the desktop Secret Service; downloaded nodes stay in
+   memory only. Unsupported entries remain visible
    with a safe explanation. Loading performs the requested HTTPS fetch but does not
    save or activate a profile or change routes/DNS.
-3. Review or search the supported nodes. **Add profile** always saves the profile
+   **Complete configuration** is selected by default. Only the checked native
+   IPv4 subset is accepted: unsupported required FakeIP/DNS/routing or integration
+   settings reject the entire import without extracting nodes or trying another format.
+   Explicit legacy node-only mode can load share links, but does not preserve the
+   provider's global rules; its default is VPN DNS `1.1.1.1` before a separate
+   profile override, without source domain/LAN exceptions.
+   Do not select it expecting unsupported complete policies to remain effective.
+   The approved complete-import boundary excludes foreign mixed listeners,
+   Clash API/web UI downloads and cache paths, with explicit disclosure: NM/COSMIC
+   supplies native integration instead. This does not discard DNS/FakeIP or routing/
+   blocking rules, and does not open unsupported full-policy execution. See
+   [ADR 0019](decisions/0019-source-client-integration-exclusions.md).
+3. Review/search the source's servers.
+   Source URLs and associations are restored from the desktop keyring after restart.
+   Locked storage needs **Restore subscriptions** and desktop authorization.
+   Unavailable/unconfirmed storage is visibly session-only, never plaintext.
+   **Save profile** always saves the profile
    and credentials on disk in NM system storage so they survive restart. The import
    page explains this before adding. This is not a desktop keyring or encrypted
    credential vault; NM controls file access and authorization. The subscription
-   URL is never saved.
-4. Press **Add profile** on the desired node's row. NM may require standard desktop
+   URL is saved separately through Secret Service, never in NM profile data.
+   **DNS and LAN for the next added profile** selects source/default, current-network plain
+   IPv4 DNS outside VPN, or one public IPv4 resolver through VPN. CurrentNetwork
+   rereads the primary uplink's DNS at activation and stores no DHCP address; it
+   does not import OS DoT/IPv6 policy. Invalid choices reject before NM writes.
+   Overrides never remove routing rules; legacy TCP-only Direct hostname rules plus
+   manual DNS reject. Complete policy independently verifies public Direct answers
+   through the selected resolver, without leaking verification to another resolver.
+   These choices apply to new profiles or an explicitly confirmed replacement,
+   not the current connection. They do not bypass full-configuration admission.
+   The default-off **Keep private IPv4 networks outside VPN** option explicitly
+   bypasses all RFC1918 destinations using existing physical routes, including
+   networks behind the router, outside VPN and hostname rules. Enabled private DNS
+   interception takes precedence. IPv6, CGNAT and link-local are excluded; old
+   connected-only profiles are not widened automatically. It cannot combine with complete
+   native policy, which already supplies ordered non-public Direct actions.
+   See [ADR 0024](decisions/0024-private-ipv4-bypass.md); broader native acceptance is pending.
+   **Intercept tunnel DNS** is an additional default-off opt-in for IPv4 UDP/TCP
+   port 53 reaching TUN, not DoH/DoT or DNS outside the tunnel.
+   **Persistent IPv4 FakeIP** additionally requires interception and returns durable
+   synthetic A addresses with empty AAAA replies. Turn FakeIP off before disabling
+   the interception opt-in. Required source modes, when admitted, are not disabled
+   by these optional switches. Protection is installed automatically and removed
+   on disconnect or terminal failure. Ordinary networking then resumes without VPN.
+   No boot enablement is required.
+   Cached FakeIP addresses are not protected outside VPN or after reboot;
+   applications may need to retry. See [ADR 0022](decisions/0022-session-scoped-guards.md).
+   These options
+   do not bypass full-policy admission or recover omitted node-only routing rules.
+4. Press **Save profile** on the desired node's row. NM may require standard desktop
    authorization. This
    saves a new profile with autoconnect off; it does not activate it. If disk storage
    is refused, adding fails instead of silently creating a temporary profile.
-5. Return to Connections using Back and press **Connect** on the saved profile's
+   Changing source/format or failing a load leaves old nodes visible but disables
+   additions until a successful reload. Existing NM profiles remain unchanged.
+5. Open **Connections** in the native navigation and press **Connect** on the saved profile's
    row under **Profiles**. An accepted request is not a successful VPN. Wait for the
    status read from NM to become **Connected**. A missing registered backend
    disables Connect; registration alone does not establish compatibility.
 
 NM owns activation, routes and DNS. The backend creates the TUN and runs protocol
 processing in an unprivileged worker. It does not launch an external proxy core.
-The current policy is IPv4 full-tunnel, tunneled DNS and explicit IPv6 blocking.
+The current policy is IPv4 full-tunnel with explicit IPv6 blocking. Profile DNS
+can use VPN or a bounded plain-DNS uplink relay, according to the selected override.
 There is no split routing, arbitrary ICMP forwarding or IPv6 tunnel support.
+The first version deliberately remains IPv4-only: IPv6 literal VPN endpoints
+cannot be added, and a hostname endpoint needs an A record at activation. Nodes
+with IPv6 literal endpoints remain visible as unsupported in node-only imports.
+The import page and saved details disclose the limitation. IPv6 FakeIP is deferred;
+complete import still waits for checked IPv4 DNS/routing translation, without
+silently falling back to node-only mode. See [ADR 0017](decisions/0017-ipv4-only-first-version.md).
 
 ## Later use and disconnect
 
@@ -53,44 +108,90 @@ completed cleanup from a method reply. To switch nodes, disconnect explicitly,
 then use another saved profile's Connect action. There is no automatic switching,
 startup activation, subscription refresh or reconnection loop in the GUI.
 
-Existing-profile editing, deletion and secret-agent ownership are not implemented.
-Use standard NM tools to manage saved profiles when necessary. Revoking a
-subscription URL does not delete the profiles already saved in NM.
+Manual protocol editing and secret-agent ownership are not implemented.
+Settings provides narrow network editing and confirmed deletion through NM.
+Removing a subscription does not delete the profiles already saved in NM.
 Old session-only profiles are not migrated automatically; re-add them explicitly
 to save them permanently. Profiles already lost on restart must be imported again.
 
 The network status applet controls its own VPN symbol (often a key). This is not
 the application's desktop icon; recreating profiles does not change that symbol.
 
-## Errors and retained network protection
+## Profile settings and deletion
+
+Choose **Settings** on a saved row. The context shows stored configuration, not
+proof of live enforcement. **Edit settings** opens a separate scrollable page;
+Cancel and Save remain below the form. Name, DNS and supported LAN/DNS/FakeIP
+choices are editable, but protocol fields are not. Required source modes stay locked.
+Invalid DNS blocks Save, not Cancel/Back. Saving requires a versioned NM observation
+(NM 1.44+) and preserves UUID, permissions, transport, IP settings and credentials.
+The running VPN is not restarted; new settings apply on the next connection.
+
+**Delete profile** opens a confirmation. An active profile uses **Disconnect and
+delete**: NM disconnection must be observed before deletion is requested. Refusal,
+unknown state, changed targets or a 45-second observation deadline stop the sequence
+without requesting Delete. The subscription remains. Cancel/Escape before dispatch
+writes nothing. NM owns profile/credential removal; native authorization and
+concurrent-control acceptance are pending.
+
+## Updating and removing subscriptions
+
+Open a source and choose **Update subscription**. Download failure preserves its
+previous servers. The candidate opens a review; **Apply update** is explicit.
+Changed saved servers require explicit matching because names and row order do not
+prove stable identity. Only that source's linked profiles can be mapped. Unmapped
+and disappeared profiles remain; new servers are not saved automatically.
+
+Mapped updates keep NM names, UUIDs, permissions, IP settings and compatible network
+overrides; required source conflicts reject. Source credentials replace old ones in
+NM system storage, not a desktop keyring. No VPN restart occurs. Multiple profile
+writes are not atomic: a later error reports confirmed earlier changes without
+claiming rollback or retrying them. Unknown writes block further profile mutations.
+
+Subscription settings can rename, change the visible URL or remove a session source.
+A changed URL must pass a fresh check and explicit Apply; failure/cancellation keeps
+the previous source and URL. Removing it forgets
+its URL and associations from the next confirmed keyring catalog without removing
+profiles or disconnecting VPN. Failed persistence leaves changes available for this
+session but does not claim the keyring was changed. After restart, explicitly Update
+to download servers; no node credentials or lists are cached. A second Tunnel writer
+is refused; unknown writes are not automatically retried. See
+[ADR 0028](decisions/0028-subscription-url-secret-service.md).
+
+## Errors and automatic network recovery
 
 If a save is not confirmed, the remote write may still have completed. The app
-blocks further additions for that app session; inspect NM instead of retrying.
-Connection requests are never automatically retried. Unknown/unavailable NM state
+blocks further Add/Edit/Delete/Apply for that app session; inspect NM instead of retrying.
+The frontend never retries ambiguous NM writes/control requests. Unknown/unavailable NM state
 is shown as such, not as Disconnected or Connected. An accepted activation that
-vanishes is reported as failed, with a retained-guard warning.
+vanishes is reported as failed, not as a successful VPN recovery.
 
-An activation/worker/service failure can intentionally leave the network guard
-closed even when NM shows no active VPN. This prevents an unprotected fallback.
-The GUI never clears that guard. In the explicitly authorized evaluation environment,
-choose either a successful retry followed by a clean disconnect, or privileged recovery:
-
-```sh
-sudo /usr/libexec/nm-tunnel-service --clear-guard
-```
-
-Recovery restores the possibility of direct, unprotected traffic; it is not a VPN
-reconnect. Do not put this command into automatic failure handling. Friendly
-desktop-authorized recovery is still pending.
+The backend retries initial preparation once within a bounded deadline. Transient
+runtime health failures retain the session while probing; fatal failure ends it.
+Resources and guards are then cleaned automatically, including by an independent
+systemd helper after a backend crash. Ordinary traffic can resume **without VPN**.
+If the backend hangs while retaining its bus name, the independent helper expires
+its liveness lease, stops that exact process and confirms its exit before cleanup.
+The connection summary separately shows observed cleanup/termination/retry progress.
+Missing or stale helper status does not prove cleanup; confirmed guard cleanup is
+not VPN readiness or a guarantee that NM has already removed its routes.
+This is not permanent lockdown or automatic reactivation of another profile.
+No manual guard command is required in the normal recovery contract. NM method
+completion does not prove cleanup has finished; errors retry instead of being
+reported as success. Synthetic legacy IPv4 VM crash/hang cleanup passed; broader
+packet/source-policy and helper-restart acceptance remain pending; see
+[ADR 0026](decisions/0026-automatic-session-recovery.md).
 
 ## Current limits
 
 Live REALITY compatibility remains unresolved. Native authorization/recovery and
 longer-running reliability remain product acceptance requirements, not source
-publication gates. Native input and accessibility are unverified; the pinned toolkit
-has known input-semantics and focus-reveal blockers documented in the frontend guide.
-Owner-reported local Arch success is not general interoperability or production
-certification. Packaging generates notices, but actual outputs still need review.
+publication gates. Complete synthetic name/URL entry passed on a private X11 display,
+but AT-SPI registration failed and the pinned toolkit has input-accessibility and
+focus-reveal blockers. Sporadic Wayland capture-process SIGSEGV remains unresolved.
+Local Arch package build/update and bounded NM VM checks do not establish general
+interoperability, desktop prompt/accessibility support or production certification.
+Packaging generates notices, but actual outputs still need review.
 See the [AUR installation direction](installation.md),
 [service contract](../crates/nm-service/README.md) and
 [frontend guide](../frontends/cosmic/README.md).

@@ -1,11 +1,9 @@
 //! Library configuration and a no-I/O dialer: connect_over must use the supplied socket.
 use crate::Error;
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use meow_proxy::{TransportChain, VlessAdapter, VlessFlow};
 use meow_transport::tls::{RealityConfig, TlsConfig, TlsLayer};
 use meow_transport::ws::{WsConfig, WsLayer};
-use nm_tunnel_profile::{Profile, Security, Transport};
-use secrecy::ExposeSecret;
+use nm_tunnel_profile::{PeerSecurity, Profile, Transport};
 use std::sync::Arc;
 
 struct NoDialer;
@@ -25,40 +23,25 @@ impl meow_proxy::dialer::TcpDialer for NoDialer {
 }
 
 fn tls_config(profile: &Profile) -> Result<TlsConfig, Error> {
-    let fields = profile.fields();
-    let mut tls = TlsConfig::new(&fields.server_name);
-    if !meow_transport::tls::is_supported_fingerprint(&fields.fingerprint) {
+    let node = profile.node();
+    let mut tls = TlsConfig::new(node.server_name());
+    if node.fingerprint() != "native"
+        && !meow_transport::tls::is_supported_fingerprint(node.fingerprint())
+    {
         return Err(Error::Configuration);
     }
     // The fork's REALITY encoder maps Android to Chrome. Do not silently
     // replace a requested wire profile just because ordinary TLS supports it.
-    if fields.security == Security::Reality && fields.fingerprint == "android" {
+    if matches!(node.security(), PeerSecurity::Reality(_)) && node.fingerprint() == "android" {
         return Err(Error::Configuration);
     }
-    tls.fingerprint = Some(fields.fingerprint.clone());
-    if !fields.alpn.is_empty() {
-        tls.alpn = fields.alpn.split(',').map(str::to_owned).collect();
-    }
-    if fields.security == Security::Reality {
-        let public_key = URL_SAFE_NO_PAD
-            .decode(&fields.public_key)
-            .map_err(|_| Error::Configuration)?
-            .try_into()
-            .map_err(|_| Error::Configuration)?;
+    tls.fingerprint = (node.fingerprint() != "native").then(|| node.fingerprint().to_owned());
+    tls.alpn = node.alpn().to_vec();
+    if let PeerSecurity::Reality(reality) = node.security() {
         let mut short_id = [0; 8];
-        for (index, pair) in fields
-            .short_id
-            .as_bytes()
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .enumerate()
-        {
-            let value = std::str::from_utf8(pair).map_err(|_| Error::Configuration)?;
-            short_id[index] = u8::from_str_radix(value, 16).map_err(|_| Error::Configuration)?;
-        }
+        short_id[..reality.short_id().len()].copy_from_slice(reality.short_id());
         tls.reality = Some(RealityConfig {
-            public_key,
+            public_key: *reality.public_key(),
             short_id,
             support_x25519_mlkem768: true,
         });
@@ -67,19 +50,16 @@ fn tls_config(profile: &Profile) -> Result<TlsConfig, Error> {
 }
 
 fn ws_config(profile: &Profile) -> Result<Option<WsConfig>, Error> {
-    let fields = profile.fields();
-    let Transport::WebSocket { path, host } = &fields.transport else {
+    let node = profile.node();
+    let Transport::WebSocket { path, host } = node.transport() else {
         return Ok(None);
     };
-    let port = fields
-        .port
-        .parse::<u16>()
-        .map_err(|_| Error::Configuration)?;
+    let port = node.endpoint().port();
     let authority = host.clone().unwrap_or_else(|| {
-        let server = if fields.server.contains(':') {
-            format!("[{}]", fields.server)
+        let server = if node.endpoint().host().contains(':') {
+            format!("[{}]", node.endpoint().host())
         } else {
-            fields.server.clone()
+            node.endpoint().host().to_owned()
         };
         if port == 443 {
             server
@@ -102,7 +82,7 @@ pub(super) fn build_with_dialer(
     profile: &Profile,
     dialer: Arc<dyn meow_proxy::dialer::TcpDialer>,
 ) -> Result<VlessAdapter, Error> {
-    let fields = profile.fields();
+    let node = profile.node();
     let mut chain = TransportChain::empty();
     chain.push(Box::new(
         TlsLayer::new(&tls_config(profile)?).map_err(|_| Error::Configuration)?,
@@ -112,14 +92,12 @@ pub(super) fn build_with_dialer(
             WsLayer::new(ws).map_err(|_| Error::Configuration)?,
         ));
     }
-    let credential = uuid::Uuid::parse_str(fields.credential.expose_secret())
-        .map_err(|_| Error::Configuration)?;
     Ok(VlessAdapter::new(
         "flow",
-        &fields.server,
-        fields.port.parse().map_err(|_| Error::Configuration)?,
-        *credential.as_bytes(),
-        fields.vision.then_some(VlessFlow::XtlsRprxVision),
+        node.endpoint().host(),
+        node.endpoint().port(),
+        *profile.credential().expose_uuid(),
+        node.vision().then_some(VlessFlow::XtlsRprxVision),
         true,
         chain,
         dialer,
@@ -179,7 +157,7 @@ mod tests {
         assert_eq!(reality.public_key, [1; 32]);
         assert_eq!(reality.short_id, [0xaa, 0xbb, 0, 0, 0, 0, 0, 0]);
         assert_eq!(tls.alpn, ["h2"]);
-        let mut android = profile.fields().clone();
+        let mut android = profile.to_draft();
         android.fingerprint = "android".into();
         let android = android.validate().map_err(|_| "invalid fixture")?;
         assert!(matches!(tls_config(&android), Err(Error::Configuration)));

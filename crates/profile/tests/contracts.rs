@@ -1,4 +1,12 @@
 //! Public profile contracts use synthetic reserved domains and non-production credentials.
+#[path = "contracts/dns.rs"]
+mod dns;
+#[path = "contracts/policy.rs"]
+mod policy;
+#[path = "contracts/source_policy.rs"]
+mod source_policy;
+#[path = "contracts/typed.rs"]
+mod typed;
 use nm_tunnel_profile::{Draft, Field, Security, Transport, import_vless};
 use secrecy::{ExposeSecret, SecretString};
 
@@ -18,7 +26,7 @@ fn imports_supported_reality_vision_without_losing_fields() -> Result<(), Box<dy
     let profile = draft
         .validate()
         .map_err(|_| "valid imported draft rejected")?;
-    let fields = profile.fields();
+    let fields = profile.to_draft();
     assert_eq!(fields.name, "Example profile");
     assert_eq!(fields.server, "proxy.example");
     assert_eq!(fields.credential.expose_secret(), CREDENTIAL);
@@ -61,15 +69,43 @@ fn import_rejects_downgrades_unknown_fields_and_duplicate_security() {
 }
 
 #[test]
-fn supports_ipv6_and_certificate_verified_tls() -> Result<(), Box<dyn std::error::Error>> {
+fn supports_ipv4_and_certificate_verified_tls() -> Result<(), Box<dyn std::error::Error>> {
     let draft = import_vless(&format!(
-        "vless://{CREDENTIAL}@[2001:db8::1]:8443?security=tls&sni=www.example.com&alpn=h2%2Chttp%2F1.1"
+        "vless://{CREDENTIAL}@192.0.2.1:8443?security=tls&sni=www.example.com&alpn=h2%2Chttp%2F1.1"
     ))?;
-    assert_eq!(draft.server, "2001:db8::1");
+    assert_eq!(draft.server, "192.0.2.1");
     assert_eq!(draft.port, "8443");
     assert_eq!(draft.alpn, "h2,http/1.1");
     assert_eq!(draft.security, Security::Tls);
     assert!(!draft.vision);
+    Ok(())
+}
+
+#[test]
+fn ipv6_endpoints_reject_without_rewriting_a_draft_or_exposing_private_values()
+-> Result<(), Box<dyn std::error::Error>> {
+    let original = import_vless(&link())?;
+    for server in ["2001:db8::1", "::1", "::", "::ffff:192.0.2.1"] {
+        let input = format!("vless://{CREDENTIAL}@[{server}]:443?security=tls&sni=www.example.com");
+        let error = import_vless(&input).err().ok_or("IPv6 link admitted")?;
+        assert!(error.message.contains("IPv4-only"));
+        assert!(!error.to_string().contains(server));
+        assert!(!error.to_string().contains(CREDENTIAL));
+        let mut draft = original.clone();
+        draft.server = server.into();
+        let errors = draft.validate().err().ok_or("IPv6 draft admitted")?;
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.field == Field::Server && error.message.contains("IPv4-only"))
+        );
+        assert_eq!(draft.server, server);
+        assert_eq!(draft.credential.expose_secret(), CREDENTIAL);
+        assert_eq!(draft.server_name, original.server_name);
+        assert_eq!(draft.security, original.security);
+    }
+    assert_eq!(original.server, "proxy.example");
+    assert!(original.validate().is_ok());
     Ok(())
 }
 
@@ -134,6 +170,9 @@ fn blank_draft_and_unsafe_endpoint_input_cannot_be_saved() -> Result<(), Box<dyn
         "proxy.example:443",
         "proxy.example/path",
         "host with space",
+        "0.0.0.0",
+        "224.0.0.1",
+        "255.255.255.255",
     ] {
         let mut draft = import_vless(&link())?;
         draft.server = server.into();
@@ -202,8 +241,8 @@ fn hostname_validation_rejects_different_url_interpretations_without_mutation()
         let profile = draft
             .validate()
             .map_err(|_| "safe ASCII hostname rejected")?;
-        assert_eq!(profile.fields().server, value);
-        assert_eq!(profile.fields().server_name, value);
+        assert_eq!(profile.node().endpoint().host(), value);
+        assert_eq!(profile.node().server_name(), value);
     }
     assert!(import_vless(&link().replace("proxy.example", "%70roxy.example")).is_err());
     assert!(
@@ -230,7 +269,7 @@ fn websocket_rejects_h2_alpn_without_rewriting_the_draft() -> Result<(), Box<dyn
         let profile = draft
             .validate()
             .map_err(|_| "HTTP/1.1 WebSocket rejected")?;
-        assert_eq!(profile.fields().alpn, alpn);
+        assert_eq!(profile.node().alpn().join(","), alpn);
     }
     Ok(())
 }
