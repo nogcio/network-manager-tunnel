@@ -1,0 +1,6 @@
+# GitHub's hosted Ubuntu 26.04 label is newer than pinned actionlint 1.7.12.
+# This extends only the linter's known labels; workflows still use hosted runners.
+# https://github.com/actions/runner-images/blob/main/README.md#available-images
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04

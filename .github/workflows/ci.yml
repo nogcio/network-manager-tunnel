@@ -23,16 +23,18 @@ env:
 jobs:
   rust:
     name: Linux repository and Rust contracts
-    runs-on: ubuntu-24.04
+    # Recovery contracts require the bus-supplied ProcessFD in D-Bus 1.16.
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Native COSMIC build prerequisites
+      - name: Native COSMIC and recovery test prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y pkg-config libwayland-dev libxkbcommon-dev libfontconfig1-dev
+          sudo apt-get install --no-install-recommends -y pkg-config libwayland-dev libxkbcommon-dev libfontconfig1-dev dbus-daemon
+          dbus-daemon --version
       - run: cargo xtask check --non-interactive
       - run: cargo xtask features --non-interactive
       - uses: actions/upload-artifact@v7

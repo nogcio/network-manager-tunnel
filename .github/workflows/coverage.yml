@@ -15,16 +15,18 @@ env:
 jobs:
   coverage:
     name: Informational Rust coverage
-    runs-on: ubuntu-24.04
+    # Run the same ProcessFD-dependent recovery contracts as ordinary CI.
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Native COSMIC build prerequisites
+      - name: Native COSMIC and recovery test prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y pkg-config libwayland-dev libxkbcommon-dev libfontconfig1-dev
+          sudo apt-get install --no-install-recommends -y pkg-config libwayland-dev libxkbcommon-dev libfontconfig1-dev dbus-daemon
+          dbus-daemon --version
       - run: rustup component add llvm-tools-preview
       - uses: taiki-e/install-action@v2
         with:

@@ -23,6 +23,16 @@ There is no separate Python checker or matching job list to maintain.
 [Coverage](../.github/workflows/coverage.yml) is a separate, manually dispatched
 workflow. A missing report or failed measurement fails that run, not ordinary CI.
 
+Rust checks and coverage use `ubuntu-26.04` with an explicitly installed
+`dbus-daemon` (D-Bus 1.16 in that image). The recovery contracts require the bus to
+provide `ProcessFD` connection credentials; Ubuntu 24.04's D-Bus 1.14 does not.
+Missing support must fail those tests, not skip them or introduce a numeric-PID
+fallback. Tests start private session buses without activating host VPN services.
+Other jobs do not exercise this contract and retain Ubuntu 24.04.
+The pinned actionlint 1.7.12 predates this hosted label, so
+`.github/actionlint.yaml` admits only that additional label without disabling
+runner-label validation or configuring an actual self-hosted runner.
+
 ## Security and hosting
 
 Workflows have read-only permissions; checkouts do not persist credentials. No
