@@ -7,6 +7,48 @@ const A: &str = "vless://12345678-1234-4234-8234-123456789abc@a.example:443?secu
 const B: &str = "vless://12345678-1234-4234-8234-123456789abd@b.example:443?security=tls&sni=peer.example#Duplicate";
 
 #[test]
+fn review_separates_source_security_credentials_and_policy_without_displaying_values() -> TestResult
+{
+    let original = list(A)?;
+    let old = original.entries()[0]
+        .profile()
+        .map_err(std::io::Error::other)?;
+    for (text, expected) in [
+        (
+            A.replace("a.example", "changed.example"),
+            fl!("source-change-server"),
+        ),
+        (
+            A.replace("123456789abc", "123456789abd"),
+            fl!("source-change-credential"),
+        ),
+        (
+            A.replace("#Duplicate", "#Renamed"),
+            fl!("source-change-none"),
+        ),
+    ] {
+        let candidate = list(&text)?;
+        let new = candidate.entries()[0]
+            .profile()
+            .map_err(std::io::Error::other)?;
+        assert_eq!(change_labels(Some(old), new), vec![expected]);
+        assert_eq!(
+            change_labels(None, new),
+            vec![fl!("source-baseline-unavailable")]
+        );
+    }
+    let mut draft = old.to_draft();
+    draft.dns_override = nm_tunnel_profile::DnsOverride::CurrentNetwork;
+    let changed = draft.validate().map_err(|_| "Policy draft")?;
+    assert_eq!(
+        change_labels(Some(old), &changed),
+        vec![fl!("source-change-policy")]
+    );
+    assert!(!equivalent(old, &changed));
+    Ok(())
+}
+
+#[test]
 fn source_write_progress_is_target_bound_and_retains_only_confirmed_steps_on_failure() -> TestResult
 {
     let mut operations = super::super::operations::Operations::default();

@@ -138,9 +138,23 @@ concurrent-control acceptance are pending.
 
 Open a source and choose **Update subscription**. Download failure preserves its
 previous servers. The candidate opens a review; **Apply update** is explicit.
+When the provider supplies HTTP validators, updates can reuse the last accepted
+in-memory document after a matching 304 response. Restarting the app or changing
+source/format requires a full response; there is no persistent document cache.
 Changed saved servers require explicit matching because names and row order do not
 prove stable identity. Only that source's linked profiles can be mapped. Unmapped
 and disappeared profiles remain; new servers are not saved automatically.
+For an explicitly selected replacement, review distinguishes server/transport/security,
+authentication and DNS/routing/protection changes against the previous downloaded
+entry. This is not a comparison with locally edited NM settings. If the old document
+is unavailable, review says so rather than claiming no changes.
+
+**Provider information** shows optional traffic usage, quota, relative expiry,
+suggested name and refresh interval from the accepted response (or the candidate
+while reviewing). Values are advisory snapshots, not live local tunnel counters or
+verified billing. Missing/invalid values do not mean unlimited. Provider hints never
+rename sources, schedule updates or disconnect an expired subscription. They are
+not restored between app sessions. Relative expiry depends on the local clock.
 
 Mapped updates keep NM names, UUIDs, permissions, IP settings and compatible network
 overrides; required source conflicts reject. Source credentials replace old ones in
@@ -148,7 +162,7 @@ NM system storage, not a desktop keyring. No VPN restart occurs. Multiple profil
 writes are not atomic: a later error reports confirmed earlier changes without
 claiming rollback or retrying them. Unknown writes block further profile mutations.
 
-Subscription settings can rename, change the visible URL or remove a session source.
+Subscription settings can rename, change the visible URL or remove a source.
 A changed URL must pass a fresh check and explicit Apply; failure/cancellation keeps
 the previous source and URL. Removing it forgets
 its URL and associations from the next confirmed keyring catalog without removing

@@ -3,5 +3,6 @@ mod contracts {
     mod capabilities;
     mod fakeip;
     mod runtime;
+    mod source_names;
     mod support;
 }

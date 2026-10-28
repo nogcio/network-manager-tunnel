@@ -24,6 +24,21 @@ authenticated identities and do not match domain actions. No full traffic-analys
 or encrypted BitTorrent detection is claimed. The narrow classifier exception is
 [ADR 0021](0021-bittorrent-signature-classifier.md).
 
+For complete policy, a successfully sniffed canonical HTTP Host/TLS SNI or QUIC
+name selects domain rules before the original FakeIP name, matching the pinned
+sing-box v1.12.0 reference. Without an observed name the owned FakeIP name remains
+the rule input. These are separate identities: sniffing does not rewrite the
+original destination, replace durable ownership or authorize Direct. Legacy
+profiles retain their original identity-first behavior. A Block decision using
+the effective rule name rejects before real destination DNS or outbound admission.
+Unknown FakeIP identities and invalid observed metadata still reject.
+Complete FakeIP TCP Proxy with inherited DNS retains the owned original FQDN inside VLESS without
+pre-resolving it. Only an explicit Direct domain rule resolves it locally through
+the selected DNS, followed by independent Direct authorization. An unresolved FQDN
+does not match IP-only rules. Explicit resolver overrides retain pre-resolution
+to preserve the user's DNS selection. Legacy and UDP paths retain pre-resolution; the
+pinned Mux.Cool per-packet API cannot yet preserve XUDP domain destinations.
+
 Source DNS supports one selected UDP, TCP or certificate-verified TLS resolver,
 through the selected proxy or explicitly Direct. Resolver hostnames require the
 declared local bootstrap role, mapped to NM's selected-uplink plain IPv4 DNS.
@@ -58,6 +73,10 @@ Direct destinations additionally require membership in a fresh/cached answer fro
 the selected real resolver, not an unrelated uplink verification query. Non-public
 IP Direct requires no DNS membership. Root retains IP descriptors and exports only
 Unix payload channels, with bounded relay slots and no fallback on refusal.
+Selecting a Direct rule through sniffed metadata does not remove the independent
+selected-resolver membership requirement; mismatching original-destination and
+sniffed-name DNS answers may still refuse a flow that sing-box allows. This
+deliberate authority boundary remains a compatibility limitation.
 
 NM still installs normal routes/DNS. Selected-uplink connected/static prefixes are
 captured with more-specific VPN routes; `/31` and `/32` capture rejects. Capture
@@ -83,6 +102,8 @@ selector entries become explicit per-node profiles without automatic switching.
 Native NM/Polkit replacement, route packets, root DNS, boot restoration, crash
 teardown and the exact private subscription remain acceptance gates. Repository
 tests and isolated XUDP do not establish deployment readiness or production safety.
+The [name-precedence comparison](../research/sing-box-compatibility.md) checks one
+bounded route-decision matrix, not wire or deployed equivalence.
 
 ## References
 

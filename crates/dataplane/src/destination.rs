@@ -24,9 +24,29 @@ pub async fn resolve(
     destination: SocketAddr,
     lan: &(impl LanScope + ?Sized),
 ) -> io::Result<Destination> {
+    resolve_with_sniffed_name(profile, broker, endpoint, destination, lan, None).await
+}
+
+/// Keep the FakeIP identity as the destination while complete-policy rules prefer
+/// the separately observed name. Legacy identity precedence remains unchanged.
+/// A sniffed name is never authority: Host independently authorizes Direct grants.
+pub(crate) async fn resolve_with_sniffed_name(
+    profile: &nm_tunnel_profile::Profile,
+    broker: &(impl Host + ?Sized),
+    endpoint: SocketAddr,
+    destination: SocketAddr,
+    lan: &(impl LanScope + ?Sized),
+    observed: Option<&str>,
+) -> io::Result<Destination> {
+    if profile.network().source().is_some()
+        && observed
+            .is_some_and(|name| nm_tunnel_profile::canonical_domain(name).as_deref() != Some(name))
+    {
+        return Err(io::Error::other("Invalid observed source-policy name."));
+    }
     tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        resolve_inner(profile, broker, endpoint, destination, lan),
+        resolve_inner(profile, broker, endpoint, destination, lan, observed),
     )
     .await
     .map_err(|_| io::Error::other("FakeIP destination deadline."))?
@@ -38,6 +58,7 @@ async fn resolve_inner(
     endpoint: SocketAddr,
     destination: SocketAddr,
     lan: &(impl LanScope + ?Sized),
+    observed: Option<&str>,
 ) -> io::Result<Destination> {
     let IpAddr::V4(ip) = destination.ip() else {
         return Err(io::Error::other("IPv6 flow is unsupported."));
@@ -53,13 +74,28 @@ async fn resolve_inner(
         return Err(io::Error::other("Unowned synthetic destination refused."));
     }
     let name = broker.fake_reverse(ip).await?;
-    if profile.routing().domain_action(Some(&name)) == Some(nm_tunnel_profile::DomainAction::Block)
+    if profile
+        .routing()
+        .domain_action(routing_name(profile, Some(&name), observed))
+        == Some(nm_tunnel_profile::DomainAction::Block)
     {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "Blocked FakeIP identity.",
         ));
     }
+    resolve_name(profile, broker, endpoint, destination, lan, name).await
+}
+
+async fn resolve_name(
+    profile: &nm_tunnel_profile::Profile,
+    broker: &(impl Host + ?Sized),
+    endpoint: SocketAddr,
+    destination: SocketAddr,
+    lan: &(impl LanScope + ?Sized),
+    name: String,
+) -> io::Result<Destination> {
+    let source = profile.network().source();
     let (id, query) = dns::query(&name)?;
     let response = resolver::relay_query(profile, broker, endpoint, &query, false).await?;
     let addresses = dns::dns_answer(id, &response)?;
@@ -80,4 +116,85 @@ async fn resolve_inner(
         address: SocketAddr::from((ip, destination.port())),
         domain: Some(name),
     })
+}
+
+pub(crate) enum TcpDestination {
+    /// An owned original name routed through Proxy, never a Direct capability.
+    ProxyDomain {
+        name: String,
+        port: u16,
+    },
+    Resolved(Destination),
+}
+
+/// Resolve only ownership before routing a complete FakeIP TCP destination.
+/// Unresolved FQDNs do not match IP-only rules. Direct resolves the original name
+/// through the selected DNS and still requires independent Host authorization.
+/// Explicit DNS overrides retain pre-resolution rather than moving DNS remotely.
+pub(crate) async fn prepare_tcp(
+    profile: &nm_tunnel_profile::Profile,
+    broker: &(impl Host + ?Sized),
+    endpoint: SocketAddr,
+    destination: SocketAddr,
+    lan: &(impl LanScope + ?Sized),
+    observed: Option<&str>,
+) -> io::Result<TcpDestination> {
+    let synthetic = match destination.ip() {
+        IpAddr::V4(ip) => profile.network().source().is_some_and(|s| s.synthetic(ip)),
+        _ => false,
+    };
+    if !synthetic || profile.network().dns_override() != nm_tunnel_profile::DnsOverride::Inherit {
+        return resolve_with_sniffed_name(profile, broker, endpoint, destination, lan, observed)
+            .await
+            .map(TcpDestination::Resolved);
+    }
+    if destination.port() == 0
+        || !profile.network().fake_ip()
+        || observed.is_some_and(|n| nm_tunnel_profile::canonical_domain(n).as_deref() != Some(n))
+    {
+        return Err(io::Error::other("Invalid complete TCP destination."));
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let IpAddr::V4(ip) = destination.ip() else {
+            return Err(io::Error::other("IPv6 flow is unsupported."));
+        };
+        let name = broker.fake_reverse(ip).await?;
+        if nm_tunnel_profile::canonical_domain(&name).as_deref() != Some(name.as_str()) {
+            return Err(io::Error::other("Invalid owned destination identity."));
+        }
+        match profile
+            .routing()
+            .domain_action(routing_name(profile, Some(&name), observed))
+        {
+            Some(nm_tunnel_profile::DomainAction::Block) => Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Blocked FakeIP identity.",
+            )),
+            Some(nm_tunnel_profile::DomainAction::Direct) => {
+                resolve_name(profile, broker, endpoint, destination, lan, name)
+                    .await
+                    .map(TcpDestination::Resolved)
+            }
+            _ => Ok(TcpDestination::ProxyDomain {
+                name,
+                port: destination.port(),
+            }),
+        }
+    })
+    .await
+    .map_err(|_| io::Error::other("FakeIP destination deadline."))?
+}
+
+/// Complete rules use sniffed metadata before the original FQDN, as sing-box does.
+/// This never replaces the original destination or grants socket authority.
+pub(crate) fn routing_name<'a>(
+    profile: &nm_tunnel_profile::Profile,
+    identity: Option<&'a str>,
+    observed: Option<&'a str>,
+) -> Option<&'a str> {
+    if profile.network().source().is_some() {
+        observed.or(identity)
+    } else {
+        identity.or(observed)
+    }
 }

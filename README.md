@@ -34,6 +34,9 @@ or a performance measurement. Production appearance follows the desktop theme.*
   is explicitly session-only, without a plaintext fallback. Isolated provider tests
   pass; real desktop unlock/prompt acceptance remains pending.
 - View upload/download rates, totals, a 60-second traffic graph and backend diagnostics.
+- Review optional provider-reported usage, quota, expiry and name/refresh hints,
+  separately from local counters. Explicit subscription updates support bounded
+  memory-only HTTP validators; hints never schedule updates or reconnect the VPN.
 - Save profiles and credentials to disk in NetworkManager so they survive restart,
   with autoconnect off.
 - Select DNS for a newly added profile: source/default policy, the current network's

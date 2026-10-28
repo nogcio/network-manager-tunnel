@@ -31,14 +31,22 @@ impl Entry {
     }
 }
 
-/// Atomic import result; source URL and raw links are not retained.
+/// Atomic import result. Raw links are not retained. A downloaded response may
+/// retain a redacted source identity and validators solely for memory-only refresh.
 #[derive(Clone, Debug)]
 pub struct Subscription {
     entries: Vec<Entry>,
     complete: bool,
+    pub(crate) metadata: crate::ProviderMetadata,
+    pub(crate) validators: Option<crate::cache::Validators>,
 }
 
 impl Subscription {
+    /// Advisory provider headers from this successfully admitted response only.
+    /// Offline parsing has absent metadata. Values do not alter node/policy admission.
+    pub fn metadata(&self) -> &crate::ProviderMetadata {
+        &self.metadata
+    }
     /// Disclosure required before saving a complete native IPv4 subset. No source
     /// addresses, paths, credentials or controller tokens appear in this notice.
     pub fn native_policy_notice(&self) -> Option<&'static str> {
@@ -54,6 +62,8 @@ impl Subscription {
                 })
                 .collect(),
             complete: true,
+            metadata: Default::default(),
+            validators: None,
         }
     }
     /// Nodes in source order, including unsupported records.
@@ -155,5 +165,7 @@ pub fn parse_subscription(bytes: &[u8]) -> Result<Subscription, SubscriptionErro
     Ok(Subscription {
         entries,
         complete: false,
+        metadata: Default::default(),
+        validators: None,
     })
 }

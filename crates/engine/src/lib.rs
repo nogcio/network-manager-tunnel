@@ -81,6 +81,60 @@ pub async fn connect_tcp(
     endpoint: SocketAddr,
     destination: SocketAddr,
 ) -> Result<Tunnel, Error> {
+    if destination.port() == 0 || destination.ip().is_unspecified() {
+        return Err(Error::Endpoint);
+    }
+    connect_tcp_metadata(
+        profile,
+        socket,
+        endpoint,
+        Metadata {
+            dst_ip: Some(destination.ip()),
+            dst_port: destination.port(),
+            ..Default::default()
+        },
+    )
+    .await
+}
+
+/// Carry a canonical DNS name inside VLESS without resolving or dialing it locally.
+/// The data plane consumes this for owned complete-policy FakeIP Proxy flows.
+/// The name is the original destination, not sniffed SNI/Host. Endpoint checks,
+/// ownership, cancellation and setup deadline match [`connect_tcp`].
+///
+/// # Errors
+/// Non-canonical/invalid names or port zero return [`Error::Configuration`] before
+/// transport I/O. Other errors have the same static categories as [`connect_tcp`].
+/// There is no DNS, IP fallback, implicit redial or credential logging.
+pub async fn connect_tcp_domain(
+    profile: &nm_tunnel_profile::Profile,
+    socket: impl TryInto<EndpointStream>,
+    endpoint: SocketAddr,
+    domain: &str,
+    port: u16,
+) -> Result<Tunnel, Error> {
+    if port == 0 || nm_tunnel_profile::canonical_domain(domain).as_deref() != Some(domain) {
+        return Err(Error::Configuration);
+    }
+    connect_tcp_metadata(
+        profile,
+        socket,
+        endpoint,
+        Metadata {
+            host: domain.into(),
+            dst_port: port,
+            ..Default::default()
+        },
+    )
+    .await
+}
+
+async fn connect_tcp_metadata(
+    profile: &nm_tunnel_profile::Profile,
+    socket: impl TryInto<EndpointStream>,
+    endpoint: SocketAddr,
+    metadata: Metadata,
+) -> Result<Tunnel, Error> {
     let socket = socket.try_into().map_err(|_| Error::Endpoint)?;
     let node = profile.node();
     if socket.peer != endpoint
@@ -89,17 +143,10 @@ pub async fn connect_tcp(
             .endpoint()
             .ipv4()
             .is_some_and(|ip| std::net::IpAddr::V4(ip) != endpoint.ip())
-        || destination.port() == 0
-        || destination.ip().is_unspecified()
     {
         return Err(Error::Endpoint);
     }
     let adapter = adapter::build(profile)?;
-    let metadata = Metadata {
-        dst_ip: Some(destination.ip()),
-        dst_port: destination.port(),
-        ..Default::default()
-    };
     let raw = Box::new(meow_proxy::StreamConn(socket.inner));
     let stream = tokio::time::timeout(
         Duration::from_secs(10),

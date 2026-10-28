@@ -84,7 +84,32 @@ pub async fn route_tcp<I: AsyncRead + AsyncWrite + Unpin>(
             return Ok(());
         }
     }
-    let resolved = destination::resolve(profile, broker, endpoint, destination, lan).await?;
+    let prepared = destination::prepare_tcp(
+        profile,
+        broker,
+        endpoint,
+        destination,
+        lan,
+        observed.as_ref().and_then(|value| value.hostname()),
+    )
+    .await?;
+    let resolved = match prepared {
+        destination::TcpDestination::Resolved(resolved) => resolved,
+        destination::TcpDestination::ProxyDomain { name, port } => {
+            return forward_tcp(inbound, async {
+                let socket = broker.open_endpoint(endpoint).await?;
+                let mut remote =
+                    nm_tunnel_engine::connect_tcp_domain(profile, socket, endpoint, &name, port)
+                        .await
+                        .map_err(|_| io::Error::other("TCP proxy failed."))?;
+                if let Some(observed) = &observed {
+                    remote.write_all(observed.prefix()).await?;
+                }
+                Ok(remote)
+            })
+            .await;
+        }
+    };
     if !complete {
         let early = routing::decide(
             profile.network(),
@@ -99,10 +124,11 @@ pub async fn route_tcp<I: AsyncRead + AsyncWrite + Unpin>(
             observed = Some(nm_tunnel_engine::inspect_tcp_hostname(&mut inbound).await?);
         }
     }
-    let name = resolved
-        .domain
-        .as_deref()
-        .or_else(|| observed.as_ref().and_then(|value| value.hostname()));
+    let name = destination::routing_name(
+        profile,
+        resolved.domain.as_deref(),
+        observed.as_ref().and_then(|value| value.hostname()),
+    );
     let decision = routing::decide(profile.network(), lan, resolved.address, name)?;
     if decision == Decision::Block {
         return Ok(());

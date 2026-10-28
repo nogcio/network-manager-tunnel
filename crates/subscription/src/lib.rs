@@ -1,10 +1,15 @@
 //! Explicit HTTPS subscription loading and bounded share-link lists.
 //! Source URLs and node credentials remain in memory and are redacted from Debug.
+mod cache;
+#[cfg(test)]
+mod cache_tests;
 mod complete;
+mod metadata;
 mod parse;
 #[cfg(test)]
 mod tests;
 pub use complete::PolicyIssue;
+pub use metadata::{MetadataValue, ProviderMetadata, ProviderUsage};
 pub use parse::{Entry, Subscription, parse_subscription};
 use secrecy::{ExposeSecret, SecretString};
 use std::time::Duration;
@@ -123,6 +128,24 @@ pub async fn fetch_subscription_format(
     download(client, url, format).await
 }
 
+/// Explicit refresh with an optional previously admitted, memory-only response.
+/// Validators are reused only for the same canonical URL and format. A 304 needs
+/// that exact cached document; otherwise it fails. A 200 replaces it only after full
+/// admission. Cancellation/failure discards this owned copy, never mutates the
+/// caller's retained catalog, writes storage, retries, applies profiles or activates.
+/// Neither URLs nor validators appear in Debug; no validators survive app restart.
+pub async fn fetch_subscription_update(
+    source: SecretString,
+    format: SubscriptionFormat,
+    previous: Option<Subscription>,
+) -> Result<Subscription, SubscriptionError> {
+    let url = endpoint(source.expose_secret())?;
+    let client = client_builder(format)
+        .build()
+        .map_err(|_| SubscriptionError::Download)?;
+    download_update(client, url, format, previous).await
+}
+
 fn client_builder(format: SubscriptionFormat) -> reqwest::ClientBuilder {
     reqwest::Client::builder()
         .https_only(true)
@@ -137,6 +160,15 @@ async fn download(
     url: url::Url,
     format: SubscriptionFormat,
 ) -> Result<Subscription, SubscriptionError> {
+    download_update(client, url, format, None).await
+}
+
+async fn download_update(
+    client: reqwest::Client,
+    url: url::Url,
+    format: SubscriptionFormat,
+    previous: Option<Subscription>,
+) -> Result<Subscription, SubscriptionError> {
     let map_error = |error: reqwest::Error| {
         if error.is_timeout() {
             SubscriptionError::Timeout
@@ -144,12 +176,31 @@ async fn download(
             SubscriptionError::Download
         }
     };
-    let mut response = client
-        .get(url)
-        .header(reqwest::header::ACCEPT, format.accept())
-        .send()
-        .await
-        .map_err(map_error)?;
+    let mut previous = previous.filter(|s| {
+        s.validators
+            .as_ref()
+            .is_some_and(|v| v.matches(&url, format))
+    });
+    let mut request = client
+        .get(url.clone())
+        .header(reqwest::header::ACCEPT, format.accept());
+    if let Some(validators) = previous.as_ref().and_then(|s| s.validators.as_ref()) {
+        if let Some(etag) = &validators.etag {
+            request = request.header(reqwest::header::IF_NONE_MATCH, etag);
+        } else if let Some(modified) = &validators.modified {
+            request = request.header(reqwest::header::IF_MODIFIED_SINCE, modified);
+        }
+    }
+    let mut response = request.send().await.map_err(map_error)?;
+    if response.status() == reqwest::StatusCode::NOT_MODIFIED {
+        let mut subscription = previous.take().ok_or(SubscriptionError::Download)?;
+        if let Some(validators) = &mut subscription.validators {
+            validators.refresh(response.headers());
+        }
+        subscription.validators = subscription.validators.filter(|v| v.matches(&url, format));
+        cache::refresh_metadata(&mut subscription.metadata, response.headers());
+        return Ok(subscription);
+    }
     if !response.status().is_success() {
         return Err(SubscriptionError::Download);
     }
@@ -166,8 +217,12 @@ async fn download(
         }
         body.extend_from_slice(&chunk);
     }
-    match format {
+    let metadata = ProviderMetadata::from_headers(response.headers());
+    let mut subscription = match format {
         SubscriptionFormat::Complete => complete::admit(&body),
         SubscriptionFormat::NodesOnly => parse_subscription(&body),
-    }
+    }?;
+    subscription.metadata = metadata;
+    subscription.validators = cache::Validators::new(&url, format, response.headers());
+    Ok(subscription)
 }

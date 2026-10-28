@@ -14,6 +14,11 @@ then wraps that owned input. The integration must resolve hostname endpoints and
 their bypass policy before calling it. Every flow/reconnect must get a new explicitly
 approved socket; an injected deny-only dialer prevents implicit direct fallback.
 Destinations travel in VLESS, never through a local destination dialer.
+`connect_tcp_domain` carries a checked canonical original DNS name and port instead
+of an IP, with identical endpoint/ownership/deadline checks and no local resolver.
+The complete-policy data plane consumes it for owned FakeIP TCP Proxy flows with
+inherited DNS; explicit resolver overrides retain pre-resolution. Sniffed
+HTTP Host/TLS SNI selects rules but never replaces that original wire destination.
 
 `EndpointStream` derives peer metadata from ordinary TCP inputs. The service uses
 `EndpointStream::relayed` after validating a private Unix grant: its trusted host
@@ -35,6 +40,10 @@ library's CommandMux/Mux.Cool XUDP path: one stream/connection per association,
 native UDP dialer or packet/TUN adapter in this package. Legacy bound UDP carries
 no per-datagram source; the pinned
 library's absent-source sentinel is normalized without accepting unrelated sources.
+Domain-addressed XUDP is not supported by our pinned library API: `write_packet`
+accepts only `SocketAddr`, and Mux.Cool emits an IP in each Keep frame. Initial
+domain metadata alone would not preserve the destination. UDP retains checked
+pre-resolution; there is no local codec or ordinary-UDP substitution for this gap.
 
 The setup deadline is ten seconds. Ownership transfers on entry, including errors and
 cancellation. Errors/Debug are redacted and stream I/O diagnostics are normalized.
@@ -90,4 +99,14 @@ python3 scripts/check_source_peer.py --peer target/research/xray-26.10.21/xray
 The script verifies the pinned Xray binary checksum, uses a loopback-only bwrap
 namespace and synthetic credentials, and fails on unavailable tools/peers. It
 checks REALITY/Vision XUDP echo, oversized rejection, invalid authentication and
-Unix/IP bridge cleanup. It never installs Xray or changes host networking.
+Unix/IP bridge cleanup, plus original-domain TCP echo over REALITY and Vision.
+The latter requires a per-probe peer log containing the VLESS domain destination
+and a 65,549-byte echo through a peer-only synthetic DNS mapping. It does not prove
+the full shared packet runtime or deployed DNS behavior. No Xray installation or
+host networking changes occur.
+
+For an explicit review of a candidate fork API, the harness also accepts
+`--domain-probe /path/to/built/xudp_domain`. This runs that separately built
+synthetic-only probe inside the same isolated namespace, requiring domain XUDP
+echo over REALITY and Vision and per-mode peer evidence. It does not replace the
+engine's dependency pin or make domain XUDP a supported production capability.

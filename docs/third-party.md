@@ -59,6 +59,11 @@ exception are in [ADR 0020](decisions/0020-native-ipv4-source-policy.md) and
 [ADR 0021](decisions/0021-bittorrent-signature-classifier.md). No sing-box source
 was copied. The public RFC 9001 QUIC fixture retains its IETF Trust copyright and
 Simplified BSD notice in [engine fixtures](../crates/engine/tests/fixtures/README.md).
+The optional [isolated route comparison](research/sing-box-compatibility.md) executes
+an upstream checksum-pinned v1.12.0 binary only as a disposable test peer. It is
+downloaded separately under ignored `target/`, not installed, linked, vendored or
+distributed with this project. Its upstream license/restrictions still apply; the
+comparison script, fixtures and production correction are independently written.
 
 NetworkManager 1.58.0's GPL-2.0-or-later VPN configuration consumer was consulted
 only to verify public D-Bus route layout and never-default semantics. No source

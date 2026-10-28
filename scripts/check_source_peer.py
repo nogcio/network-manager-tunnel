@@ -83,7 +83,7 @@ async def stop(process):
             await process.wait()
 
 
-async def inside(scratch, peer_path, probe):
+async def inside(scratch, peer_path, probe, domain_probe=None):
     if os.environ.get("MEOW_ISOLATED_PEER_TEST") != "1" or {name for _, name in socket.if_nameindex()} != {"lo"}:
         raise RuntimeError("Refusing peer test outside a loopback-only network namespace")
     peer_path = checked_peer(peer_path)
@@ -115,19 +115,37 @@ async def inside(scratch, peer_path, probe):
                          "certificates": [{"certificateFile": str(scratch / "peer.crt"), "keyFile": str(scratch / "peer.key")}]}}})
     config = scratch / "peer.json"
     config.write_text(json.dumps({"log": {"loglevel": "debug"}, "inbounds": inbounds,
-                                  "outbounds": [{"protocol": "freedom", "settings": {
+                                  "dns": {"hosts": {"echo.fixture.invalid": "127.0.0.1"}},
+                                  "outbounds": [{"protocol": "freedom", "settings": {"domainStrategy": "UseIPv4",
                                       "finalRules": [{"action": "allow", "ip": ["127.0.0.1/32"]}]}}]}))
     echo = Echo()
     transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(lambda: echo, local_addr=("127.0.0.1", 24445))
+    tcp_bytes = [0]
+    async def tcp_echo(reader, writer):
+        try:
+            async with asyncio.timeout(20):
+                while data := await reader.read(65536):
+                    tcp_bytes[0] += len(data)
+                    writer.write(data)
+                    await writer.drain()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+    tcp_server = await asyncio.start_server(tcp_echo, "127.0.0.1", 24445)
     with (scratch / "peer.log").open("w") as log:
         peer = await asyncio.create_subprocess_exec(str(peer_path), "run", "-c", str(config), stdout=log, stderr=log)
         try:
             for port in [24444, 24449, 24446]:
                 await readiness(peer, port)
-            for mode in ["xudp", "vision-xudp", "xudp-invalid-auth"]:
+            commands = [(probe, mode) for mode in ["xudp", "vision-xudp", "xudp-invalid-auth", "domain", "vision-domain"]]
+            if domain_probe is not None:
+                commands += [(domain_probe, mode) for mode in ["xudp-domain", "vision-xudp-domain"]]
+            for executable, mode in commands:
                 before = echo.count
+                before_tcp = tcp_bytes[0]
+                before_log = (scratch / "peer.log").stat().st_size
                 env = dict(os.environ, MEOW_TEST_PUBLIC_KEY=public)
-                process = await asyncio.create_subprocess_exec(str(probe), mode, env=env)
+                process = await asyncio.create_subprocess_exec(str(executable), mode, env=env)
                 try:
                     result = await asyncio.wait_for(process.wait(), 25)
                 finally:
@@ -137,37 +155,63 @@ async def inside(scratch, peer_path, probe):
                     raise RuntimeError(f"Engine {mode} probe failed; no skipped pass")
                 if mode == "xudp-invalid-auth" and echo.count != before:
                     raise RuntimeError("Invalid authentication reached the isolated echo service")
-                if mode != "xudp-invalid-auth" and echo.count - before != 4:
+                if mode in ["xudp", "vision-xudp", "xudp-domain", "vision-xudp-domain"] and echo.count - before != 4:
                     raise RuntimeError("Required XUDP datagrams did not traverse the pinned peer")
+                if mode in ["domain", "vision-domain", "xudp-domain", "vision-xudp-domain"]:
+                    domain_udp = mode.endswith("xudp-domain")
+                    if domain_udp and tcp_bytes[0] != before_tcp:
+                        raise RuntimeError("Domain XUDP unexpectedly delivered TCP application data")
+                    if not domain_udp and (echo.count != before or tcp_bytes[0] - before_tcp != 65549):
+                        raise RuntimeError("Required domain TCP payload did not traverse the pinned peer")
+                    log.flush()
+                    with (scratch / "peer.log").open() as evidence:
+                        evidence.seek(before_log)
+                        wire_log = evidence.read()
+                    marker = "udp:echo.fixture.invalid:24445" if domain_udp else "tcp:echo.fixture.invalid:24445"
+                    if marker not in wire_log:
+                        raise RuntimeError("Peer did not observe the original domain on the VLESS wire")
         finally:
             await stop(peer)
             transport.close()
+            tcp_server.close()
+            await tcp_server.wait_closed()
 
 
 def main():
-    if len(sys.argv) == 5 and sys.argv[1] == "--inside":
+    if len(sys.argv) in [5, 6] and sys.argv[1] == "--inside":
         asyncio.run(inside(*map(pathlib.Path, sys.argv[2:])))
         return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--peer", type=pathlib.Path, required=True)
+    parser.add_argument("--domain-probe", type=pathlib.Path,
+                        help="Optional explicitly built fork domain-XUDP probe; never a production backend")
     args = parser.parse_args()
     root = pathlib.Path(__file__).resolve().parent.parent
     for tool in ["cargo", "bwrap", "timeout", "openssl"]:
         if shutil.which(tool) is None:
             raise RuntimeError(f"Required tool unavailable: {tool}; no skipped pass")
     peer = checked_peer(args.peer)
+    domain_probe = args.domain_probe.resolve(strict=True) if args.domain_probe else None
+    if domain_probe is not None and (not domain_probe.is_file() or not os.access(domain_probe, os.X_OK)):
+        raise RuntimeError("Domain probe is not an executable file")
     probe = build(root)
     scratch_root = root / "target" / "source-peer"
     scratch_root.mkdir(parents=True, exist_ok=True)
-    print("[2/2] Pinned XUDP/REALITY/Vision, invalid auth, payload bounds and relay cleanup", flush=True)
+    print("[2/2] Pinned XUDP and TCP-domain REALITY/Vision, invalid auth, bounds and cleanup", flush=True)
     with tempfile.TemporaryDirectory(prefix="isolated-", dir=scratch_root) as directory:
         scratch = pathlib.Path(directory).resolve()
         try:
-            subprocess.run(["timeout", "--kill-after=3s", "100s", "bwrap", "--unshare-user", "--unshare-net", "--unshare-pid",
+            subprocess.run(["timeout", "--kill-after=3s", "160s", "bwrap", "--unshare-user", "--unshare-net", "--unshare-pid",
                         "--die-with-parent", "--ro-bind", "/", "/", "--bind", str(scratch), str(scratch),
                         "--dev", "/dev", "--proc", "/proc", "--setenv", "MEOW_ISOLATED_PEER_TEST", "1",
-                        sys.executable, str(pathlib.Path(__file__).resolve()), "--inside", str(scratch), str(peer), str(probe)],
-                           check=True, cwd=root)
+                         sys.executable, str(pathlib.Path(__file__).resolve()), "--inside", str(scratch), str(peer), str(probe)]
+                         + ([str(domain_probe)] if domain_probe else []),
+                            check=True, cwd=root)
+            if domain_probe is not None:
+                log = root / "target" / "xtask" / "logs" / "domain-source-peer.log"
+                log.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(scratch / "peer.log", log)
+                print(f"Synthetic domain wire evidence retained at {log}", flush=True)
         except subprocess.CalledProcessError:
             log = root / "target" / "xtask" / "logs" / "source-peer.log"
             log.parent.mkdir(parents=True, exist_ok=True)
@@ -175,7 +219,7 @@ def main():
                 shutil.copyfile(scratch / "peer.log", log)
             print(f"Synthetic peer diagnostics retained at {log}", flush=True)
             raise
-    print("Summary: PASS; pinned isolated source XUDP checks completed; no host tunnel/profile changes", flush=True)
+    print("Summary: PASS; isolated XUDP and TCP-domain checks completed; no host tunnel/profile changes", flush=True)
 
 
 if __name__ == "__main__":

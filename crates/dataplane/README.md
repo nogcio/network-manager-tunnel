@@ -62,3 +62,16 @@ Core contracts use synthetic capabilities and an in-memory packet device, withou
 NM, Unix IPC, root or a kernel TUN. Linux broker/storage regressions remain in the
 service. These checks do not establish packet interoperability, deployed security
 acceptance or operation on other platforms; no cross-build is part of this refactor.
+
+The optional [pinned sing-box route comparison](../../docs/research/sing-box-compatibility.md)
+checks complete-policy FakeIP/HTTP Host/TLS SNI name precedence in a rootless
+loopback namespace. It is an explicit test-peer command, not part of ordinary
+checks or a production backend. UDP supplied-name precedence, original-name DNS
+and independent Direct refusal have ordinary regression contracts. Wire FQDN
+forwarding for complete-policy TCP Proxy with inherited DNS preserves the owned original name
+without destination DNS. Only an explicit Direct domain rule resolves that name;
+its IP still needs independent authorization. Unresolved FQDNs do not match IP-only
+rules. Explicit DNS overrides retain pre-resolution. Legacy and UDP behavior remain
+unchanged. The engine's isolated peer probe
+checks TCP-domain wire forwarding separately; full packet/deployed parity remains
+unaccepted, and domain-addressed XUDP still needs a library API change.

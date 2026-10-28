@@ -25,7 +25,8 @@ impl Route {
         Self::connect_named(profile, host, endpoint, destination, lan, None).await
     }
 
-    /// Admit QUIC-observed names only for complete policy, after owned FakeIP.
+    /// Admit QUIC-observed names only for complete policy; they select rules ahead
+    /// of the FakeIP name without changing its original destination identity.
     /// Host calls are cancellation-sensitive; no alternate route is attempted.
     pub async fn connect_named(
         profile: &nm_tunnel_profile::Profile,
@@ -35,20 +36,23 @@ impl Route {
         lan: &(impl LanScope + ?Sized),
         hostname: Option<&str>,
     ) -> io::Result<Self> {
-        let resolved =
-            crate::destination::resolve(profile, host, endpoint, destination, lan).await?;
+        let hostname = if profile.network().source().is_some() {
+            hostname
+        } else {
+            None
+        };
+        let resolved = crate::destination::resolve_with_sniffed_name(
+            profile,
+            host,
+            endpoint,
+            destination,
+            lan,
+            hostname,
+        )
+        .await?;
         let destination = resolved.address;
         // Legacy UDP never acquires TCP-only hostname inspection semantics.
-        let name = resolved.domain.as_deref().or_else(|| {
-            if matches!(
-                profile.routing(),
-                nm_tunnel_profile::RoutingPolicy::Complete(_)
-            ) {
-                hostname
-            } else {
-                None
-            }
-        });
+        let name = crate::destination::routing_name(profile, resolved.domain.as_deref(), hostname);
         match routing::decide(profile.network(), lan, destination, name)? {
             Decision::Block => Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,

@@ -17,10 +17,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("Expected reality, vision, xudp or vision-xudp.")?;
     if !matches!(
         mode.as_str(),
-        "reality" | "vision" | "xudp" | "vision-xudp" | "xudp-invalid-auth"
+        "reality"
+            | "vision"
+            | "xudp"
+            | "vision-xudp"
+            | "xudp-invalid-auth"
+            | "domain"
+            | "vision-domain"
     ) || args.next().is_some()
     {
-        return Err("Only synthetic reality/vision TCP and XUDP modes are accepted.".into());
+        return Err("Only synthetic reality/vision TCP/domain and XUDP modes are accepted.".into());
     }
     let xudp = mode.contains("xudp");
     let invalid_auth = mode == "xudp-invalid-auth";
@@ -116,8 +122,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     tokio::time::timeout(Duration::from_secs(12), async {
         let socket = tokio::net::TcpStream::connect(endpoint).await?;
-        let mut stream =
-            nm_tunnel_engine::connect_tcp(&profile, socket, endpoint, destination).await?;
+        let mut stream = if mode.contains("domain") {
+            nm_tunnel_engine::connect_tcp_domain(
+                &profile,
+                socket,
+                endpoint,
+                "echo.fixture.invalid",
+                destination.port(),
+            )
+            .await?
+        } else {
+            nm_tunnel_engine::connect_tcp(&profile, socket, endpoint, destination).await?
+        };
         let payload: Vec<u8> = (0..65549).map(|index| (index % 251) as u8).collect();
         stream.write_all(&payload).await?;
         stream.flush().await?;

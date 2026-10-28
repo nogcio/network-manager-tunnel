@@ -18,6 +18,10 @@ fn plain_and_base64_lists_produce_the_same_nodes() -> Result<(), Box<dyn std::er
         URL_SAFE_NO_PAD.encode(&list),
     ] {
         let subscription = parse_subscription(body.as_bytes())?;
+        assert_eq!(
+            subscription.metadata(),
+            &nm_tunnel_subscription::ProviderMetadata::default()
+        );
         assert_eq!(subscription.entries().len(), 2);
         assert_eq!(subscription.supported_count(), 2);
         assert_eq!(subscription.entries()[0].name(), "Example");

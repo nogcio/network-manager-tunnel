@@ -57,6 +57,47 @@ async fn source_direct_rejections_precede_all_dns_and_socket_work() -> io::Resul
     Ok(())
 }
 
+#[tokio::test]
+async fn a_sniffed_direct_rule_still_requires_independent_destination_dns_membership()
+-> io::Result<()> {
+    use hickory_proto::rr::{RData, Record, rdata::A};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct SelectedDns(AtomicUsize);
+    #[async_trait::async_trait]
+    impl Exchange for SelectedDns {
+        async fn exchange(&self, _: &Profile, bytes: &[u8], _: bool) -> io::Result<Vec<u8>> {
+            let mut message = dns::parse_query(bytes)?;
+            assert_eq!(message.queries[0].name().to_utf8(), "direct.example.");
+            self.0.fetch_add(1, Ordering::SeqCst);
+            message.metadata.message_type = hickory_proto::op::MessageType::Response;
+            message.add_answer(Record::from_rdata(
+                message.queries[0].name().clone(),
+                60,
+                RData::A(A(Ipv4Addr::new(203, 0, 113, 2))),
+            ));
+            message.to_vec().map_err(io::Error::other)
+        }
+    }
+    let mut resolver = Resolver::new(source_profile()?, SelectedDns(AtomicUsize::new(0)));
+    assert!(
+        resolver
+            .authorize_direct(
+                Some("direct.example"),
+                SocketAddr::from(([203, 0, 113, 1], 443))
+            )
+            .await
+            .is_err()
+    );
+    resolver
+        .authorize_direct(
+            Some("direct.example"),
+            SocketAddr::from(([203, 0, 113, 2], 443)),
+        )
+        .await?;
+    assert_eq!(resolver.transport.0.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
 #[tokio::test(start_paused = true)]
 async fn cached_answers_are_question_transport_and_activation_bound_and_age_ttls() -> io::Result<()>
 {

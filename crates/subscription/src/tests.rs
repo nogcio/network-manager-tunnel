@@ -177,6 +177,62 @@ async fn stalled_body_obeys_the_request_deadline() -> TestResult {
 }
 
 #[tokio::test]
+async fn provider_headers_are_attached_only_to_successfully_admitted_bodies() -> TestResult {
+    for (body, format) in [
+        (LINK.to_owned(), SubscriptionFormat::NodesOnly),
+        (
+            serde_json::to_string(&crate::complete::fixtures::configuration())?,
+            SubscriptionFormat::Complete,
+        ),
+        ("not a configuration".into(), SubscriptionFormat::Complete),
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let url = url::Url::parse(&format!("http://{}/list", listener.local_addr()?))?;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nSubscription-Userinfo: upload=12; download=23; total=0; expire=0\r\nProfile-Title: Synthetic provider\r\nProfile-Update-Interval: 24\r\n\r\n{body}",
+            body.len()
+        );
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = timeout(DEADLINE, listener.accept()).await??;
+            timeout(DEADLINE, async {
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    if request.len() >= 8192 {
+                        return Err(std::io::Error::other("oversized test request"));
+                    }
+                    request.push(stream.read_u8().await?);
+                }
+                stream.write_all(response.as_bytes()).await
+            })
+            .await??;
+            Ok::<_, Box<dyn Error + Send + Sync>>(())
+        });
+        let client = client_builder(format)
+            .https_only(false)
+            .no_proxy()
+            .build()?;
+        let result = timeout(DEADLINE, download(client, url, format)).await?;
+        timeout(DEADLINE, server).await???;
+        if body == "not a configuration" {
+            assert!(result.is_err());
+        } else {
+            let result = result?;
+            assert_eq!(
+                result.metadata().title,
+                MetadataValue::Value("Synthetic provider".into())
+            );
+            assert_eq!(
+                result.metadata().update_interval_hours,
+                MetadataValue::Value(24)
+            );
+            assert!(matches!(result.metadata().usage, MetadataValue::Value(_)));
+            assert!(!format!("{result:?}").contains("Synthetic provider"));
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn complete_format_rejects_policy_and_node_only_responses_without_a_fallback_request()
 -> TestResult {
     assert_eq!(SubscriptionFormat::default(), SubscriptionFormat::Complete);

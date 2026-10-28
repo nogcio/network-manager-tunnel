@@ -175,6 +175,34 @@ a dependency. Runtime ownership and limits live in
 [ADR 0006](decisions/0006-experimental-nm-runtime.md) and the
 [service contract](../crates/nm-service/README.md).
 
+## Published domain XUDP library API, not yet adopted
+
+The owner-approved opt-in fork patch is published as
+[`b75aa6db6a0f79101abb68ab5bdcff84f03d07b0`][domain-xudp-revision], based on
+`fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21`. It
+extends `ProxyPacketConn` with typed IP/domain reads and writes, plus an explicit
+VLESS Mux.Cool domain entry point. The intended production consumer is our supplied-
+socket engine; a separately built synthetic fork probe exercises the API in the
+existing isolated peer harness. Unsupported adapters reject domain writes by default.
+Legacy reads and metadata-based UDP fallback are not automatically opted in.
+
+The patch adds no dependency, crypto, unsafe implementation or native feature.
+Existing MIT/provenance and maintenance ownership in ADR 0004 remain applicable.
+It reuses the library's Mux.Cool framing and cancellation/stream ownership. Source
+metadata remains typed rather than relabeling a different domain as an IP sentinel;
+the future engine consumer still needs an explicit destination-bound response policy.
+Library and isolated peer checks are not independent security review.
+
+Publication is not adoption: the production manifest/lockfile still pin
+`fbbb9d23a9fbcba28ac0ed69c18e2aea95e35e21`. Final source/feature verification and
+consumer integration are required before updating that pin. No machine-local
+production dependency is added. The fork's selected unit tests and library/probe
+Clippy pass; narrow-feature all-target Clippy retains Docker-test helper dead-code
+errors reproduced on its unmodified base. Three optional upstream live-peer tests
+remain ignored, separately from the explicitly executed pinned Xray checks.
+
+[domain-xudp-revision]: https://github.com/nogcio/meow-rs/commit/b75aa6db6a0f79101abb68ab5bdcff84f03d07b0
+
 ## Original Git license evidence
 
 ### Complete-policy dependency additions

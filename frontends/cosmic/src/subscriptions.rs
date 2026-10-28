@@ -10,6 +10,8 @@ use nm_tunnel_subscription::{Subscription, SubscriptionError, SubscriptionFormat
 use secrecy::{ExposeSecret, SecretString};
 use std::{collections::BTreeMap, time::SystemTime};
 
+#[path = "source_metadata.rs"]
+mod metadata;
 #[path = "source_persistence.rs"]
 mod persistence;
 
@@ -153,13 +155,37 @@ fn complete_step(
 
 fn equivalent(a: &Profile, b: &Profile) -> bool {
     a.node() == b.node()
-        && a.network().dns_override() == b.network().dns_override()
+        && network_equivalent(a, b)
+        && a.credential().expose_uuid() == b.credential().expose_uuid()
+}
+
+fn network_equivalent(a: &Profile, b: &Profile) -> bool {
+    a.network().dns_override() == b.network().dns_override()
         && a.network().dns_handling() == b.network().dns_handling()
         && a.network().lan_bypass() == b.network().lan_bypass()
         && a.network().tcp_domains().map(|p| p.as_json())
             == b.network().tcp_domains().map(|p| p.as_json())
         && a.network().source().map(|p| p.as_json()) == b.network().source().map(|p| p.as_json())
-        && a.credential().expose_uuid() == b.credential().expose_uuid()
+}
+
+fn change_labels(old: Option<&Profile>, new: &Profile) -> Vec<String> {
+    let Some(old) = old else {
+        return vec![fl!("source-baseline-unavailable")];
+    };
+    let mut labels = Vec::new();
+    if old.node() != new.node() {
+        labels.push(fl!("source-change-server"));
+    }
+    if old.credential().expose_uuid() != new.credential().expose_uuid() {
+        labels.push(fl!("source-change-credential"));
+    }
+    if !network_equivalent(old, new) {
+        labels.push(fl!("source-change-policy"));
+    }
+    if labels.is_empty() {
+        labels.push(fl!("source-change-none"));
+    }
+    labels
 }
 
 fn unique_match(profile: &Profile, list: &Subscription) -> Option<usize> {
@@ -476,10 +502,14 @@ impl App {
                     self.sources.updating = true;
                     self.sources.settings = false;
                     self.core.set_show_context(false);
+                    let previous = self.catalog.subscription.clone();
                     return cosmic::task::future(async move {
                         Message::Loaded(
                             ticket,
-                            nm_tunnel_subscription::fetch_subscription_format(source, format).await,
+                            nm_tunnel_subscription::fetch_subscription_update(
+                                source, format, previous,
+                            )
+                            .await,
                         )
                     });
                 }
@@ -523,10 +553,12 @@ impl App {
                     return Task::none();
                 };
                 self.sources.updating = true;
+                let previous = self.catalog.subscription.clone();
                 return cosmic::task::future(async move {
                     Message::Loaded(
                         ticket,
-                        nm_tunnel_subscription::fetch_subscription_format(source, format).await,
+                        nm_tunnel_subscription::fetch_subscription_update(source, format, previous)
+                            .await,
                     )
                 });
             }
@@ -974,6 +1006,12 @@ impl App {
                                 ),
                             )),
                     )
+                    .push_maybe(
+                        self.catalog
+                            .subscription
+                            .as_ref()
+                            .map(|list| metadata::view(list.metadata())),
+                    )
                     .push(self.source_controls())
                     .push(self.import_page());
                 if let Some(source) = self.sources.active() {
@@ -998,12 +1036,14 @@ impl App {
                             ),
                     )
                     .push(widget::text::title2(fl!("review-subscription-update")))
+                    .push(metadata::view(review.candidate.metadata()))
                     .push(widget::text::body(fl!("source-identity-disclosure")));
                 let mut changes = widget::settings::section().title(fl!("source-changes"));
                 if let Some(old) = &self.catalog.subscription {
                     for entry in review.candidate.entries() {
                         if let Ok(profile) = entry.profile()
-                            && unique_match(profile, old).is_none()
+                            && (unique_match(profile, old).is_none()
+                                || unique_match(profile, &review.candidate).is_none())
                         {
                             changes = changes.add(widget::settings::item(
                                 entry.name(),
@@ -1013,7 +1053,8 @@ impl App {
                     }
                     for entry in old.entries() {
                         if let Ok(profile) = entry.profile()
-                            && unique_match(profile, &review.candidate).is_none()
+                            && (unique_match(profile, &review.candidate).is_none()
+                                || unique_match(profile, old).is_none())
                         {
                             changes = changes.add(widget::settings::item(
                                 entry.name(),
@@ -1021,6 +1062,9 @@ impl App {
                             ));
                         }
                     }
+                }
+                if self.catalog.subscription.is_none() {
+                    content = content.push(widget::text::body(fl!("source-baseline-unavailable")));
                 }
                 content = content.push(changes);
                 if let Some(source) = self.sources.active() {
@@ -1042,8 +1086,25 @@ impl App {
                                     .position(|index| *index == mapping.index)
                             })
                             .map_or(0, |position| position + 1);
-                        let row = widget::column::with_capacity(2)
+                        let mut row = widget::column::with_capacity(3)
                             .push(widget::text::heading(saved.name()));
+                        if let Some(mapping) = review.mappings.get(uuid) {
+                            let old = source.links.get(uuid).and_then(|link| link.index).and_then(
+                                |index| {
+                                    self.catalog
+                                        .subscription
+                                        .as_ref()?
+                                        .entries()
+                                        .get(index)?
+                                        .profile()
+                                        .ok()
+                                },
+                            );
+                            for label in change_labels(old, &mapping.candidate) {
+                                row = row.push(widget::text::caption(label));
+                            }
+                            row = row.push(widget::text::caption(fl!("source-change-scope")));
+                        }
                         content = content.push(if review.completed.contains_key(uuid) {
                             row.push(widget::text::caption(fl!("update-confirmed")))
                         } else {

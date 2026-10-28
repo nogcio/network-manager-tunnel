@@ -1,4 +1,4 @@
-use nm_tunnel_engine::{EndpointStream, Error, connect_tcp, connect_udp};
+use nm_tunnel_engine::{EndpointStream, Error, connect_tcp, connect_tcp_domain, connect_udp};
 use nm_tunnel_profile::{Draft, Profile, Security};
 use std::{
     net::{Ipv4Addr, SocketAddr},
@@ -23,6 +23,50 @@ fn profile(endpoint: SocketAddr) -> Result<Profile, Box<dyn std::error::Error>> 
     }
     .validate()
     .map_err(|_| "invalid fixture".into())
+}
+
+#[tokio::test]
+async fn domain_targets_reject_without_io_and_cancel_owned_transport_without_redial()
+-> Result<(), Box<dyn std::error::Error>> {
+    timeout(Duration::from_secs(5), async {
+        let endpoint: SocketAddr = "192.0.2.1:443".parse()?;
+        for (name, port, mismatch) in [
+            ("https://private-token.example", 443, false),
+            ("Upper.example", 443, false),
+            ("127.0.0.1", 443, false),
+            ("owned.example", 0, false),
+            ("owned.example", 443, true),
+        ] {
+            let (input, mut peer) = tokio::net::UnixStream::pair()?;
+            let input = EndpointStream::relayed(input, endpoint)?;
+            let approved = if mismatch {
+                "192.0.2.2:443".parse()?
+            } else {
+                endpoint
+            };
+            let error = connect_tcp_domain(&profile(endpoint)?, input, approved, name, port)
+                .await
+                .err()
+                .ok_or("Invalid domain flow accepted")?;
+            assert!(matches!(error, Error::Endpoint | Error::Configuration));
+            assert!(!error.to_string().contains("private-token"));
+            let mut bytes = Vec::new();
+            peer.read_to_end(&mut bytes).await?;
+            assert!(bytes.is_empty());
+        }
+        let (input, mut peer) = tokio::net::UnixStream::pair()?;
+        let input = EndpointStream::relayed(input, endpoint)?;
+        let profile = profile(endpoint)?;
+        let task = tokio::spawn(async move {
+            connect_tcp_domain(&profile, input, endpoint, "owned.example", 443).await
+        });
+        assert_eq!(peer.read_u8().await?, 22);
+        task.abort();
+        assert!(task.await.is_err_and(|e| e.is_cancelled()));
+        peer.read_to_end(&mut Vec::new()).await?;
+        Ok::<_, Box<dyn std::error::Error>>(())
+    })
+    .await?
 }
 
 #[tokio::test]

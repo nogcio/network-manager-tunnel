@@ -7,6 +7,7 @@ All project documentation is maintained in English.
 - [Architecture and ownership](architecture.md)
 - [Rust protocol-library research](research/rust-protocol-libraries.md)
 - [REALITY registry incompatibility and alternative-library constraints](research/reality-feasibility.md)
+- [sing-box policy compatibility and isolated route comparison](research/sing-box-compatibility.md)
 - [NetworkManager and desktop research](research/networkmanager-desktops.md)
 - [Roadmap, experiments and acceptance criteria](roadmap.md)
 - [ADR 0001: foundation and boundaries](decisions/0001-foundation.md)
