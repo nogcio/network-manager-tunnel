@@ -9,7 +9,7 @@ use crate::{
 };
 use futures_util::{SinkExt, StreamExt};
 use nm_tunnel_dataplane::source_dns::{self, failed};
-use nm_tunnel_profile::{DnsOverride, DnsTransport, Profile, SourceDns};
+use nm_tunnel_profile::{DnsOverride, DnsTransport, Profile, SourceDnsSelection};
 use std::{
     io,
     net::{Ipv4Addr, SocketAddr},
@@ -73,32 +73,18 @@ impl Resolver {
 #[async_trait::async_trait]
 impl source_dns::Exchange for Network {
     async fn exchange(&self, profile: &Profile, request: &[u8], tcp: bool) -> io::Result<Vec<u8>> {
-        if profile.network().dns_override() == DnsOverride::CurrentNetwork {
-            return crate::supervisor::uplink_dns::exchange(
-                DnsOverride::CurrentNetwork,
-                request,
-                tcp,
-                self.uplink_dns,
-                &self.interface,
-            )
-            .await;
-        }
-        let upstream = match profile.network().dns_override() {
-            DnsOverride::Inherit => profile.network().source().ok_or_else(failed)?.dns().clone(),
-            DnsOverride::ProxyIpv4(address) => SourceDns {
-                host: None,
-                address,
-                port: 53,
-                transport: if tcp {
-                    DnsTransport::Tcp
-                } else {
-                    DnsTransport::Udp
-                },
-                via_proxy: true,
-                tls_name: String::new(),
-                http_path: String::new(),
-            },
-            DnsOverride::CurrentNetwork => return Err(failed()),
+        let upstream = match source_dns::selected_upstream(profile, request, tcp)? {
+            SourceDnsSelection::CurrentNetwork {} => {
+                return crate::supervisor::uplink_dns::exchange(
+                    DnsOverride::CurrentNetwork,
+                    request,
+                    tcp,
+                    self.uplink_dns,
+                    &self.interface,
+                )
+                .await;
+            }
+            SourceDnsSelection::Endpoint { dns } => dns,
         };
         let destination = if let Some(host) = &upstream.host {
             bootstrap::resolve(host, upstream.port, &self.interface, self.uplink_dns).await?

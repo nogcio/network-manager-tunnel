@@ -3,11 +3,17 @@ use super::{PolicyIssue, outbounds::Outbounds, value::*};
 use serde_json::{Value, json};
 const ISSUE: PolicyIssue = PolicyIssue::Routing;
 
+pub(super) struct Compiled {
+    pub version: u32,
+    pub field: &'static str,
+    pub encoded: String,
+}
+
 pub(super) fn parse(
     value: &Value,
     outbounds: &Outbounds,
     local_dns: &str,
-) -> Result<String, PolicyIssue> {
+) -> Result<Compiled, PolicyIssue> {
     let route = object(
         value,
         &[
@@ -81,7 +87,26 @@ pub(super) fn parse(
     }
     let mut native = Vec::new();
     let mut expanded_names = 0;
-    for rule in &rules[3..rules.len() - 1] {
+    let middle = &rules[3..rules.len() - 1];
+    let mut extended = false;
+    for rule in middle {
+        let map = rule.as_object().ok_or(ISSUE)?;
+        if let Some(references) = map.get("rule_set") {
+            extended |= sets.requires_v2(references)?
+                || map.contains_key("domain")
+                || map.contains_key("domain_suffix");
+        }
+        extended |= map.keys().any(|key| {
+            matches!(
+                key.as_str(),
+                "type" | "invert" | "ip_cidr" | "port" | "port_range"
+            )
+        });
+    }
+    if extended {
+        return super::route_rules::compile(middle, outbounds, &sets);
+    }
+    for rule in middle {
         let rule = object(
             rule,
             &[
@@ -123,13 +148,17 @@ pub(super) fn parse(
     }
     let text = serde_json::to_string(&json!({"version":1,"rules":native})).map_err(|_| ISSUE)?;
     nm_tunnel_profile::TcpDomainPolicy::from_json(&text).map_err(|_| ISSUE)?;
-    Ok(text)
+    Ok(Compiled {
+        version: 1,
+        field: "domain_policy",
+        encoded: text,
+    })
 }
 
 /// Only called after the mandatory sniff/hijack prefix has been checked.
 /// sing-box closes these established/post-sniff flows on reject; this is not
 /// permission to translate a pre-sniff TUN reject requiring RST/ICMP responses.
-fn final_action(
+pub(super) fn final_action(
     map: &serde_json::Map<String, Value>,
     outbounds: &Outbounds,
 ) -> Result<&'static str, PolicyIssue> {

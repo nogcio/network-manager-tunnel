@@ -3,7 +3,7 @@ use crate::{DomainAction, PolicyError, TcpDomainPolicy, canonical_domain};
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, SocketAddr};
 
-/// Transport for the single selected real DNS upstream. No implicit fallback.
+/// Transport for a selected real DNS upstream. No implicit fallback.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DnsTransport {
@@ -108,21 +108,29 @@ impl SourceDns {
 struct Document {
     version: u32,
     dns: SourceDns,
-    domain_policy: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dns_policy: Option<crate::source_dns_policy::DnsPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    domain_policy: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    route_policy: Option<String>,
     fakeip_range: String,
     tun_address: Ipv4Addr,
     tun_prefix: u8,
     mtu: u16,
 }
 
-/// Native source-policy v1: sniff, DNS hijack, BitTorrent block, ordered domain
-/// actions, non-public IPv4 Direct, otherwise the selected proxy. Only that exact
-/// ordering is admitted. DNS caches are independent of bootstrap and FakeIP state.
+/// Native source-policy: sniff, DNS hijack, BitTorrent block, ordered explicit
+/// actions, non-public IPv4 Direct, otherwise the selected proxy. V1 uses domain
+/// rules; v2 uses bounded destination predicates; v3 adds ordered real-DNS rules
+/// with exactly one of those route representations. Only that pipeline is admitted.
+/// DNS caches are independent of bootstrap and FakeIP state.
 /// Parsing has no I/O; errors/Debug never contain supplied settings or DNS names.
 #[derive(Clone)]
 pub struct SourcePolicy {
     document: Document,
-    domains: TcpDomainPolicy,
+    domains: Option<TcpDomainPolicy>,
+    routes: Option<crate::route_policy::RoutePolicy>,
     encoded: String,
 }
 
@@ -133,14 +141,20 @@ impl std::fmt::Debug for SourcePolicy {
 }
 
 impl SourcePolicy {
-    /// Decode the bounded native v1 contract atomically. Unknown fields, pools,
-    /// versions, resolver settings and invalid tunnel configuration reject.
+    /// Decode the bounded native contract atomically: v1 requires domain_policy,
+    /// v2 requires route_policy, never both. V3 requires dns_policy and exactly one
+    /// route representation. Old profiles retain their encoding; older backends
+    /// reject v2/v3 rather than dropping destination or DNS conditions.
+    ///
+    /// # Errors
+    /// Returns [`PolicyError`] for unknown fields/pools/versions, contradictory
+    /// rule representations, invalid resolver/TUN settings or predicate budgets.
     pub fn from_json(text: &str) -> Result<Self, PolicyError> {
         if text.len() > crate::MAX_POLICY_BYTES {
             return Err(PolicyError);
         }
         let mut document: Document = serde_json::from_str(text).map_err(|_| PolicyError)?;
-        if document.version != 1
+        if !matches!(document.version, 1..=3)
             || !matches!(
                 document.fakeip_range.as_str(),
                 "198.18.0.0/16" | "198.18.0.0/15"
@@ -152,6 +166,13 @@ impl SourcePolicy {
             return Err(PolicyError);
         }
         document.dns = document.dns.validated()?;
+        if (document.version == 3) != document.dns_policy.is_some() {
+            return Err(PolicyError);
+        }
+        document.dns_policy = document
+            .dns_policy
+            .map(|policy| policy.validated())
+            .transpose()?;
         let mask = u32::MAX << (32 - document.tun_prefix);
         let network = u32::from(document.tun_address) & mask;
         let broadcast = network | !mask;
@@ -161,8 +182,20 @@ impl SourcePolicy {
         {
             return Err(PolicyError);
         }
-        let domains = TcpDomainPolicy::from_json(&document.domain_policy)?;
-        document.domain_policy = domains.as_json().into();
+        let (domains, routes) = match (
+            document.version,
+            &document.domain_policy,
+            &document.route_policy,
+        ) {
+            (1 | 3, Some(text), None) => (Some(TcpDomainPolicy::from_json(text)?), None),
+            (2 | 3, None, Some(text)) => (
+                None,
+                Some(crate::route_policy::RoutePolicy::from_json(text)?),
+            ),
+            _ => return Err(PolicyError),
+        };
+        document.domain_policy = domains.as_ref().map(|policy| policy.as_json().into());
+        document.route_policy = routes.as_ref().map(|policy| policy.as_json().into());
         let encoded = serde_json::to_string(&document).map_err(|_| PolicyError)?;
         if encoded.len() > crate::MAX_POLICY_BYTES {
             return Err(PolicyError);
@@ -170,6 +203,7 @@ impl SourcePolicy {
         Ok(Self {
             document,
             domains,
+            routes,
             encoded,
         })
     }
@@ -177,13 +211,49 @@ impl SourcePolicy {
     pub fn as_json(&self) -> &str {
         &self.encoded
     }
-    /// Checked real DNS endpoint; user overrides are applied independently.
+    /// Default checked real DNS endpoint. Domain selection uses [`Self::dns_for`];
+    /// user overrides are applied independently.
     pub fn dns(&self) -> &SourceDns {
         &self.document.dns
     }
-    /// Match an explicit domain action without confusing it with the default.
+    /// Whether real destination DNS is explicit rather than delegated to the
+    /// remote VLESS peer. Such profiles must resolve owned names through this
+    /// policy even for Proxy; otherwise the configured resolver would be bypassed.
+    pub fn has_dns_rules(&self) -> bool {
+        self.document.dns_policy.is_some()
+    }
+    /// Select the first exact/suffix real-resolution rule, or the default endpoint.
+    /// FakeIP and endpoint bootstrap never use this selector. No I/O, retries or
+    /// socket authority; explicit user DNS overrides are applied by the runtime.
+    ///
+    /// # Errors
+    /// Returns [`PolicyError`] for invalid names, never silently selecting a default.
+    pub fn dns_for(&self, name: &str) -> Result<crate::SourceDnsSelection, PolicyError> {
+        let name = canonical_domain(name).ok_or(PolicyError)?;
+        Ok(self
+            .document
+            .dns_policy
+            .as_ref()
+            .and_then(|policy| policy.select(&name))
+            .unwrap_or_else(|| crate::SourceDnsSelection::Endpoint {
+                dns: self.document.dns.clone(),
+            }))
+    }
+    /// Match a domain-only route action. Destination predicates need a port and
+    /// return None here; use [`Self::unresolved_action`] or [`Self::action`].
     pub fn domain_action(&self, name: Option<&str>) -> Option<DomainAction> {
-        self.domains.matched_action(name)
+        self.domains
+            .as_ref()
+            .and_then(|policy| policy.matched_action(name))
+    }
+    /// Match ordered rules for an owned unresolved FQDN without DNS or a guessed
+    /// IP. CIDR alternatives do not match; port and logical conditions still do.
+    /// No match is distinct from an explicit Proxy decision. No socket authority.
+    pub fn unresolved_action(&self, name: Option<&str>, port: u16) -> Option<DomainAction> {
+        self.routes.as_ref().map_or_else(
+            || self.domain_action(name),
+            |policy| policy.matched_action(name, None, port),
+        )
     }
     /// Apply terminal rules after DNS hijacking. Known BitTorrent is blocked
     /// before all domain/IP decisions; domain actions precede non-public matching.
@@ -196,7 +266,17 @@ impl SourcePolicy {
         if bittorrent {
             return DomainAction::Block;
         }
-        if let Some(action) = self.domain_action(name) {
+        let explicit = self.routes.as_ref().map_or_else(
+            || self.domain_action(name),
+            |policy| {
+                let ip = match destination.ip() {
+                    std::net::IpAddr::V4(ip) => Some(ip),
+                    _ => None,
+                };
+                policy.matched_action(name, ip, destination.port())
+            },
+        );
+        if let Some(action) = explicit {
             return action;
         }
         if matches!(destination.ip(), std::net::IpAddr::V4(ip) if non_public_ipv4(ip)) {

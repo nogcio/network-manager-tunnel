@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 /// Maximum encoded TCP policy size, including all rule names.
 pub const MAX_POLICY_BYTES: usize = 16 * 1024;
 
-/// Terminal action for a TCP hostname. No match always stays in the VPN.
+/// Intended terminal route action. No match stays in the VPN; Direct still needs
+/// independent supervisor authority and is not a permission to open a socket.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DomainAction {

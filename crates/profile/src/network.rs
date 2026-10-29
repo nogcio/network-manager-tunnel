@@ -153,6 +153,15 @@ pub enum RoutingPolicy<'a> {
 }
 
 impl RoutingPolicy<'_> {
+    /// Evaluate an owned unresolved name plus destination port, without guessing
+    /// an IP or performing DNS. Complete v2 policies retain logical/port semantics.
+    pub fn unresolved_action(self, name: Option<&str>, port: u16) -> Option<DomainAction> {
+        match self {
+            Self::Legacy(policy) => policy.and_then(|policy| policy.matched_action(name)),
+            Self::Complete(policy) => policy.unresolved_action(name, port),
+        }
+    }
+
     /// Explicit name action, distinct from a default proxy or private-IP action.
     pub fn domain_action(self, name: Option<&str>) -> Option<DomainAction> {
         match self {

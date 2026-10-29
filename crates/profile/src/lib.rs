@@ -5,6 +5,8 @@ mod import;
 mod network;
 mod policy;
 mod profile;
+mod route_policy;
+mod source_dns_policy;
 mod source_policy;
 mod validation;
 
@@ -14,7 +16,9 @@ pub use import::import_vless;
 pub use network::{DnsHandling, LanBypass, NetworkPolicy, RoutingPolicy};
 pub use policy::{DomainAction, MAX_POLICY_BYTES, PolicyError, TcpDomainPolicy, canonical_domain};
 pub use profile::{Credential, Profile};
+pub use route_policy::RoutePolicy;
 use secrecy::SecretString;
+pub use source_dns_policy::SourceDnsSelection;
 pub use source_policy::{DnsTransport, SourceDns, SourcePolicy, non_public_ipv4};
 pub use validation::{Field, ValidationError};
 

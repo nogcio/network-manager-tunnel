@@ -297,6 +297,27 @@ must preserve the approved-socket boundary. Add concrete protocol-library adapte
 not a general plugin system in anticipation of unknown protocols. Schema-v1/v2
 compatibility stays at the codec boundary and never silently changes old profiles.
 
+Complete source-policy v2 uses the model's immutable destination predicate tree
+for IPv4 CIDR/port and logical route conditions. TCP/UDP preserve unresolved-name
+semantics before DNS; root re-evaluates real-destination predicates and retains
+independent DNS membership for public named Direct. Legacy source v1 is unchanged;
+older backends reject v2. This adds no alternate route writer or worker authority;
+see [ADR 0020][destination-predicates].
+
+Source v3 adds immutable ordered real-DNS selection by exact/suffix original query
+name, with explicit endpoint Direct/Proxy or NM uplink DNS. These profiles resolve
+owned Proxy names locally through that policy instead of delegating DNS to VLESS;
+v1/v2 retain remote-domain forwarding. Root derives the resolver from the question,
+never a worker-supplied endpoint/index, and independent public Direct DNS membership
+uses the same selection. Client FakeIP/bootstrap remain separate; caches are scoped
+to immutable activation profiles/uplinks. Failures/cancellation never switch DNS
+or outbound. V3 requires DNS rules and exactly one route representation; old
+backends reject it. See [the DNS contract][source-dns-selection].
+
+[source-dns-selection]: decisions/0020-native-ipv4-source-policy.md#ordered-real-dns-selection-in-native-source-policy-v3
+
+[destination-predicates]: decisions/0020-native-ipv4-source-policy.md#destination-predicates-in-native-source-policy-v2
+
 ## Lifecycle and safety requirements
 
 1. Validate profile and secret requirements without allocating tunnel resources.

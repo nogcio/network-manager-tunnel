@@ -20,6 +20,7 @@ pub struct Observe {
     pub original: String,
     pub route: Mutex<Option<&'static str>>,
     pub queries: Mutex<usize>,
+    pub refuse_dns: bool,
 }
 
 impl Observe {
@@ -71,6 +72,9 @@ impl Host for Observe {
             .queries
             .lock()
             .map_err(|_| io::Error::other("Probe lock failed."))? += 1;
+        if self.refuse_dns {
+            return Err(io::Error::other("Synthetic DNS refusal."));
+        }
         let mut response = query;
         response.metadata.message_type = hickory_proto::op::MessageType::Response;
         response.add_answer(hickory_proto::rr::Record::from_rdata(

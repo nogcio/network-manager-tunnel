@@ -3,6 +3,70 @@ use nm_tunnel_profile::{DnsOverride, DomainAction, SourcePolicy};
 const POLICY: &str = r#"{"version":1,"dns":{"address":"1.1.1.1","port":853,"transport":"tls","via_proxy":true,"tls_name":"1.1.1.1"},"domain_policy":"{\"version\":1,\"rules\":[{\"domain_suffix\":[\"direct.example\"],\"action\":\"direct\"},{\"domain\":[\"proxy.example\"],\"action\":\"proxy\"},{\"domain\":[\"blocked.example\"],\"action\":\"block\"}]}","fakeip_range":"198.18.0.0/15","tun_address":"172.19.0.1","tun_prefix":30,"mtu":1400}"#;
 
 #[test]
+fn dns_v3_is_versioned_bounded_canonical_and_never_silently_downgraded()
+-> Result<(), Box<dyn std::error::Error>> {
+    use nm_tunnel_profile::SourceDnsSelection;
+    use serde_json::json;
+    let mut value: serde_json::Value = serde_json::from_str(POLICY)?;
+    value["version"] = json!(3);
+    value["dns_policy"] = json!({"version":1,"resolvers":[{"type":"current_network"}],"rules":[{"domain_suffix":[".WORK.example."],"resolver":0}]});
+    let policy = SourcePolicy::from_json(&value.to_string())?;
+    assert!(matches!(
+        policy.dns_for("sub.work.example")?,
+        SourceDnsSelection::CurrentNetwork {}
+    ));
+    for name in ["work.example", "notwork.example"] {
+        assert!(matches!(
+            policy.dns_for(name)?,
+            SourceDnsSelection::Endpoint { .. }
+        ));
+    }
+    assert!(policy.dns_for("invalid name").is_err());
+    assert!(!format!("{:?}", policy.dns_for("sub.work.example")?).contains("work"));
+    let before = policy.as_json().to_owned();
+    for (pointer, replacement) in [
+        ("/version", json!(1)),
+        ("/version", json!(2)),
+        ("/version", json!(4)),
+        ("/dns_policy/version", json!(2)),
+        ("/dns_policy/rules/0/resolver", json!(1)),
+        ("/dns_policy/rules/0/resolver", json!(-1)),
+        ("/dns_policy/rules/0/domain_suffix", json!(["bad name"])),
+        (
+            "/dns_policy/rules/0/domain_suffix",
+            json!(vec!["valid.example"; 129]),
+        ),
+        ("/dns_policy/resolvers", json!([])),
+        (
+            "/dns_policy/resolvers",
+            json!([{ "type":"current_network","via_proxy":true }]),
+        ),
+        (
+            "/dns_policy/resolvers",
+            json!([{ "type":"endpoint","dns":{ "address":"127.0.0.1","port":53,"transport":"udp","via_proxy":false,"tls_name":"" } }]),
+        ),
+        (
+            "/dns_policy/resolvers",
+            json!(vec![json!({"type":"current_network"}); 9]),
+        ),
+    ] {
+        let mut invalid = value.clone();
+        *invalid.pointer_mut(pointer).ok_or("Pointer")? = replacement;
+        let input = invalid.to_string();
+        assert!(SourcePolicy::from_json(&input).is_err(), "{pointer}");
+        assert_eq!(input, invalid.to_string());
+        assert_eq!(policy.as_json(), before);
+    }
+    value
+        .as_object_mut()
+        .ok_or("Document")?
+        .remove("dns_policy");
+    assert!(SourcePolicy::from_json(&value.to_string()).is_err());
+    assert_eq!(SourcePolicy::from_json(policy.as_json())?.as_json(), before);
+    Ok(())
+}
+
+#[test]
 fn doh_policy_round_trips_and_refuses_unsafe_paths_without_changing_legacy_json()
 -> Result<(), Box<dyn std::error::Error>> {
     let legacy = SourcePolicy::from_json(POLICY)?;

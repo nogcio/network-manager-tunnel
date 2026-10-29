@@ -1,13 +1,12 @@
-//! Bounded domain-only inline sets, compiled away before native policy admission.
-use super::{PolicyIssue, value::*};
-use serde_json::Value;
+//! Bounded inline destination predicates, compiled away without file/network I/O.
+use super::{PolicyIssue, route_rules, value::*};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 
 const ISSUE: PolicyIssue = PolicyIssue::Routing;
 const MAX_SETS: usize = 32;
 const MAX_NODES: usize = 128;
 const MAX_NAMES: usize = 128;
-const MAX_DEPTH: usize = 8;
 
 #[derive(Clone, Default)]
 pub(super) struct Names {
@@ -28,7 +27,12 @@ impl Names {
     }
 }
 
-pub(super) struct InlineSets(HashMap<String, Names>);
+struct InlineSet {
+    rules: Vec<Value>,
+    names: Option<Names>,
+}
+
+pub(super) struct InlineSets(HashMap<String, InlineSet>);
 
 impl InlineSets {
     pub fn parse(value: Option<&Value>) -> Result<Self, PolicyIssue> {
@@ -43,7 +47,7 @@ impl InlineSets {
             return Err(ISSUE);
         }
         let mut result = HashMap::new();
-        let mut budget = Budget { nodes: 0, names: 0 };
+        let mut budget = route_rules::Budget::default();
         for set in sets {
             let set = object(set, &["type", "tag", "rules"], ISSUE)?;
             if !matches!(optional_text(set, "type", ISSUE)?, "" | "inline") {
@@ -57,102 +61,126 @@ impl InlineSets {
             if rules.is_empty() || rules.len() > MAX_NODES {
                 return Err(ISSUE);
             }
-            let mut names = Names::default();
+            let mut predicates = Vec::new();
             for rule in rules {
-                names.extend(&budget.rule(rule, 1)?)?;
+                let condition = budget.condition(rule, None, 1)?;
+                if budget.names > MAX_NAMES {
+                    return Err(ISSUE);
+                }
+                predicates.push(route_rules::checked_condition(condition)?);
             }
-            result.insert(tag.to_owned(), names);
+            let mut names = Some(Names::default());
+            for rule in &predicates {
+                match (&mut names, flat_names(rule)?) {
+                    (Some(names), Some(other)) => names.extend(&other)?,
+                    _ => names = None,
+                }
+            }
+            result.insert(
+                tag.to_owned(),
+                InlineSet {
+                    rules: predicates,
+                    names,
+                },
+            );
         }
         Ok(Self(result))
     }
 
-    /// Multiple tags are ORed. A route combining these with another match group
-    /// must be rejected by the caller: concatenation would erase an AND condition.
+    /// Legacy domain-only OR sets keep their original source-v1 representation.
     pub fn referenced(&self, value: &Value) -> Result<Names, PolicyIssue> {
+        let mut result = Names::default();
+        for set in self.references(value)? {
+            result.extend(set.names.as_ref().ok_or(ISSUE)?)?;
+        }
+        Ok(result)
+    }
+
+    pub fn requires_v2(&self, references: &Value) -> Result<bool, PolicyIssue> {
+        Ok(self
+            .references(references)?
+            .iter()
+            .any(|set| set.names.is_none()))
+    }
+
+    fn references(&self, value: &Value) -> Result<Vec<&InlineSet>, PolicyIssue> {
         let count = value.as_array().map_or(1, Vec::len);
         if count == 0 || count > MAX_SETS {
             return Err(ISSUE);
         }
-        let tags = strings(value, ISSUE)?;
-        let mut result = Names::default();
-        for tag in tags {
-            result.extend(self.0.get(&tag).ok_or(ISSUE)?)?;
-        }
-        Ok(result)
-    }
-}
-
-struct Budget {
-    nodes: usize,
-    names: usize,
-}
-
-impl Budget {
-    fn rule(&mut self, value: &Value, depth: usize) -> Result<Names, PolicyIssue> {
-        self.nodes += 1;
-        if depth > MAX_DEPTH || self.nodes > MAX_NODES {
-            return Err(ISSUE);
-        }
-        let map = value.as_object().ok_or(ISSUE)?;
-        if flag(map, "invert", false, ISSUE)? {
-            return Err(ISSUE);
-        }
-        match optional_text(map, "type", ISSUE)? {
-            "logical" => {
-                object(value, &["type", "mode", "rules", "invert"], ISSUE)?;
-                if text(map, "mode", ISSUE)? != "or" {
-                    return Err(ISSUE);
-                }
-                let rules = map.get("rules").and_then(Value::as_array).ok_or(ISSUE)?;
-                if rules.is_empty() || rules.len() > MAX_NODES {
-                    return Err(ISSUE);
-                }
-                let mut result = Names::default();
-                for rule in rules {
-                    result.extend(&self.rule(rule, depth + 1)?)?;
-                }
-                Ok(result)
-            }
-            "" | "default" => {
-                object(value, &["type", "domain", "domain_suffix", "invert"], ISSUE)?;
-                let domains = self.names(map.get("domain"), false)?;
-                let suffixes = self.names(map.get("domain_suffix"), true)?;
-                if domains.is_empty() && suffixes.is_empty() {
-                    return Err(ISSUE);
-                }
-                Ok(Names { domains, suffixes })
-            }
-            _ => Err(ISSUE),
-        }
-    }
-
-    fn names(&mut self, value: Option<&Value>, suffix: bool) -> Result<Vec<String>, PolicyIssue> {
-        let Some(value) = value else {
-            return Ok(Vec::new());
-        };
-        let count = value.as_array().map_or(1, Vec::len);
-        if count > MAX_NAMES - self.names {
-            return Err(ISSUE);
-        }
-        self.names += count;
         strings(value, ISSUE)?
             .into_iter()
-            .map(|name| {
-                let subdomains_only = suffix && name.starts_with('.');
-                let name = nm_tunnel_profile::canonical_domain(if subdomains_only {
-                    &name[1..]
-                } else {
-                    &name
-                })
-                .ok_or(ISSUE)?;
-                Ok(if subdomains_only {
-                    format!(".{name}")
-                } else {
-                    name
-                })
-            })
+            .map(|tag| self.0.get(&tag).ok_or(ISSUE))
             .collect()
     }
+
+    /// Single non-inverted default entries merge like groups (address OR and
+    /// port OR). Other shapes stay self-contained and AND the outer condition.
+    /// Each tag is a separate OR branch: never union groups across different tags.
+    pub fn compose(&self, value: &Value, outer: Value, empty: bool) -> Result<Value, PolicyIssue> {
+        let mut branches = Vec::new();
+        for set in self.references(value)? {
+            let single = &set.rules[0];
+            let branch =
+                if set.rules.len() == 1 && single["type"] == "match" && single["invert"] == false {
+                    let mut merged = outer.clone();
+                    for key in ["domain", "domain_suffix", "ip_cidr", "ports"] {
+                        merged[key]
+                            .as_array_mut()
+                            .ok_or(ISSUE)?
+                            .extend(single[key].as_array().ok_or(ISSUE)?.iter().cloned());
+                    }
+                    merged
+                } else {
+                    let own = group("or", set.rules.clone());
+                    if empty {
+                        own
+                    } else {
+                        group("and", vec![outer.clone(), own])
+                    }
+                };
+            branches.push(branch);
+            // Bound expansion incrementally before another tag is cloned.
+            route_rules::checked_condition(group("or", branches.clone()))?;
+        }
+        Ok(group("or", branches))
+    }
+}
+
+fn group(mode: &str, mut rules: Vec<Value>) -> Value {
+    if rules.len() == 1 {
+        rules.remove(0)
+    } else {
+        json!({"type":"logical","mode":mode,"rules":rules,"invert":false})
+    }
+}
+
+fn flat_names(condition: &Value) -> Result<Option<Names>, PolicyIssue> {
+    if condition["invert"] == true {
+        return Ok(None);
+    }
+    if condition["type"] == "match" {
+        if !condition["ip_cidr"].as_array().ok_or(ISSUE)?.is_empty()
+            || !condition["ports"].as_array().ok_or(ISSUE)?.is_empty()
+        {
+            return Ok(None);
+        }
+        return Ok(Some(Names {
+            domains: strings(&condition["domain"], ISSUE)?,
+            suffixes: strings(&condition["domain_suffix"], ISSUE)?,
+        }));
+    }
+    if condition["mode"] != "or" {
+        return Ok(None);
+    }
+    let mut names = Names::default();
+    for rule in condition["rules"].as_array().ok_or(ISSUE)? {
+        let Some(other) = flat_names(rule)? else {
+            return Ok(None);
+        };
+        names.extend(&other)?;
+    }
+    Ok(Some(names))
 }
 
 #[cfg(test)]

@@ -1,16 +1,18 @@
-//! Supported DNS roles: client A/AAAA FakeIP, outbound bootstrap local, one real upstream.
+//! Client A/AAAA FakeIP, local bootstrap and bounded ordered real-DNS selection.
 use super::{PolicyIssue, outbounds::Outbounds, value::*};
 use nm_tunnel_profile::{DnsTransport, SourceDns};
 use serde_json::Value;
 use std::collections::HashMap;
 mod modern;
 pub(super) mod options;
+mod rules;
 const ISSUE: PolicyIssue = PolicyIssue::Dns;
 
 pub(super) struct Dns {
     pub upstream: SourceDns,
     pub range: String,
     pub local: String,
+    pub policy: Option<Value>,
 }
 pub(super) fn parse(value: &Value, outbounds: &Outbounds) -> Result<Dns, PolicyIssue> {
     if value
@@ -20,10 +22,14 @@ pub(super) fn parse(value: &Value, outbounds: &Outbounds) -> Result<Dns, PolicyI
     {
         return modern::parse(value, outbounds);
     }
-    parse_legacy(value, outbounds)
+    parse_legacy(value, outbounds, &HashMap::new())
 }
 
-fn parse_legacy(value: &Value, outbounds: &Outbounds) -> Result<Dns, PolicyIssue> {
+fn parse_legacy(
+    value: &Value,
+    outbounds: &Outbounds,
+    tls_names: &HashMap<String, String>,
+) -> Result<Dns, PolicyIssue> {
     let dns = object(
         value,
         &[
@@ -141,63 +147,36 @@ fn parse_legacy(value: &Value, outbounds: &Outbounds) -> Result<Dns, PolicyIssue
         || text(values[0].as_object().ok_or(ISSUE)?, "tag", ISSUE),
         |v| v.as_str().ok_or(ISSUE),
     )?;
-    let selected = servers.get(selected).ok_or(ISSUE)?;
-    let upstream = parse_upstream(
-        text(selected, "address", ISSUE)?,
-        text(selected, "detour", ISSUE)? == outbounds.proxy,
+    let upstream = endpoint(
+        selected,
+        servers.get(selected).ok_or(ISSUE)?,
+        outbounds,
+        tls_names,
     )?;
     let rules = dns.get("rules").and_then(Value::as_array).ok_or(ISSUE)?;
-    if rules.len() != 2 {
-        return Err(ISSUE);
-    }
-    let mut client = false;
-    let mut outbound = false;
-    for rule in rules {
-        let rule = object(
-            rule,
-            &[
-                "query_type",
-                "outbound",
-                "server",
-                "action",
-                "strategy",
-                "disable_cache",
-                "rewrite_ttl",
-                "client_subnet",
-            ],
-            ISSUE,
-        )?;
-        options::route_options(rule)?;
-        if !matches!(optional_text(rule, "action", ISSUE)?, "" | "route") {
-            return Err(ISSUE);
-        }
-        if rule.contains_key("query_type") && !rule.contains_key("outbound") {
-            let mut types = strings(rule.get("query_type").ok_or(ISSUE)?, ISSUE)?;
-            types.sort();
-            if client || types != ["A", "AAAA"] || text(rule, "server", ISSUE)? != fake_tag {
-                return Err(ISSUE);
-            }
-            client = true;
-        } else if rule.contains_key("outbound") && !rule.contains_key("query_type") {
-            if outbound
-                || strings(rule.get("outbound").ok_or(ISSUE)?, ISSUE)? != ["any"]
-                || text(rule, "server", ISSUE)? != local
-            {
-                return Err(ISSUE);
-            }
-            outbound = true;
-        } else {
-            return Err(ISSUE);
-        }
-    }
-    if !client || !outbound {
-        return Err(ISSUE);
-    }
+    let policy = rules::parse(rules, &servers, &fake_tag, &local, outbounds, tls_names)?;
     Ok(Dns {
         upstream,
         range: range.into(),
         local,
+        policy,
     })
+}
+
+fn endpoint(
+    tag: &str,
+    server: &serde_json::Map<String, Value>,
+    outbounds: &Outbounds,
+    tls_names: &HashMap<String, String>,
+) -> Result<SourceDns, PolicyIssue> {
+    let mut dns = parse_upstream(
+        text(server, "address", ISSUE)?,
+        text(server, "detour", ISSUE)? == outbounds.proxy,
+    )?;
+    if let Some(name) = tls_names.get(tag) {
+        dns.tls_name = name.clone();
+    }
+    dns.validated().map_err(|_| ISSUE)
 }
 
 fn parse_upstream(address: &str, via_proxy: bool) -> Result<SourceDns, PolicyIssue> {

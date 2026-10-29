@@ -34,17 +34,17 @@ original destination, replace durable ownership or authorize Direct. Legacy
 profiles retain their original identity-first behavior. A Block decision using
 the effective rule name rejects before real destination DNS or outbound admission.
 Unknown FakeIP identities and invalid observed metadata still reject.
-Complete FakeIP TCP Proxy with inherited DNS retains the owned original FQDN inside VLESS without
-pre-resolving it. Only an explicit Direct domain rule resolves it locally through
-the selected DNS, followed by independent Direct authorization. An unresolved FQDN
-does not match IP-only rules. Explicit resolver overrides retain pre-resolution
+Source-v1/v2 FakeIP TCP Proxy with inherited DNS retains the owned original FQDN
+inside VLESS without pre-resolving it. Only an explicit Direct domain rule resolves
+it locally through the selected DNS, followed by independent Direct authorization.
+An unresolved FQDN does not match IP-only rules. Explicit resolver overrides retain pre-resolution
 to preserve the user's DNS selection. Complete-policy XUDP now uses the same owned
 original-name preparation as TCP, through the pinned library's typed domain API.
 Each packet retains the domain; responses must carry exactly that name and port.
 IP/absent domain responses reject without fallback. Legacy bound UDP retains
 pre-resolution. This introduces no persisted profile or FakeIP identity migration.
 
-Source DNS supports one selected UDP, TCP, certificate-verified TLS or HTTPS resolver,
+Source-v1/v2 DNS supports one selected UDP, TCP, certificate-verified TLS or HTTPS resolver,
 through the selected proxy or explicitly Direct. Resolver hostnames require the
 declared local bootstrap role, mapped to NM's selected-uplink plain IPv4 DNS.
 Bootstrap A answers are bound to the question/CNAME chain. There is no resolver
@@ -57,7 +57,8 @@ The typed DNS subset follows sing-box v1.12.0: `udp`, `tcp`, `tls`, `https`,
 Unlike legacy DNS, typed servers default to Direct without `detour`. A checked
 `route.default_domain_resolver` naming local may replace the deprecated outbound
 DNS rule; client A/AAAA still uses FakeIP. Other DNS actions, resolver graphs,
-active per-query modifiers, TLS overrides and nonempty HTTP headers reject atomically.
+active per-query modifiers, custom TLS roots/verification bypass and nonempty HTTP
+headers reject atomically. Checked typed TLS verification-name overrides are retained.
 String shorthand and object forms of `domain_resolver` are admitted for typed DNS
 servers, VLESS endpoint bootstrap and the route default only when they select the
 same declared local role. Object `strategy` is omitted or `ipv4_only`; cache/TTL/ECS
@@ -75,22 +76,159 @@ rule remain mandatory, and route destination overrides, extra resolve actions,
 timeout/fragment modifiers and unsupported rule-set conditions are not discarded
 or approximated.
 
-Domain-only inline route sets are compiled into the existing ordered domain-policy
+The legacy domain-only inline path compiles into the existing ordered domain-policy
 without a new runtime matcher, resolver, storage format or Direct capability.
 Declarations use `type:inline` (or omit type), a unique tag and nonempty headless
 rules. Exact/suffix alternatives, set entries, referenced tag lists and logical OR
 nodes form a union under the referring route's action. Source route order and
-first-match behavior remain unchanged. Combining a set reference with an explicit
-domain group would require an AND, so this form rejects instead of unioning it.
+first-match behavior remain unchanged. Rules combining a set reference with an
+explicit group use the source-v2 compilation described below, not legacy flattening.
 All declarations validate, even unused ones. Limits are 32 sets, 128 headless nodes,
 depth 8, 128 declared names and 16 KiB serialized declarations; the native 64-rule,
 128-expanded-name and 16-KiB policy budgets remain unchanged. Repeated references
-consume the expanded budget. Logical AND, inversion, recursive references, IP/CIDR,
-regex, other conditions, local/remote/binary sets and DNS rule-set matching reject.
+consume the expanded budget. The source-v2 path below supports destination CIDR,
+ports, logical AND/OR and inversion. Recursive references, regex, source-address
+and other unsupported conditions, local/remote/binary sets and DNS sets reject.
 No referenced file is read and no URL is fetched. Native names, not source tags or
 containers, survive compilation. This adds format compatibility, not independent
 packet/security acceptance or authorization beyond the existing selected-resolver
 Direct check.
+
+### Destination predicates in native source-policy v2
+
+The complete importer additionally admits bounded destination conditions in the
+middle ordered route rules: `domain`, `domain_suffix`, IPv4 `ip_cidr`, destination
+`port`/`port_range`, logical AND/OR and `invert`. IPv4 literals without a slash
+become /32; CIDRs normalize to their network using the existing ipnet library.
+Port ranges are inclusive, including `:N` and `N:` within 1..65535; port zero,
+IPv6, malformed/reversed ranges and empty conditions reject. No process/source-IP,
+regex, network-type, extra action or destination override is silently discarded.
+
+This follows the destination group in sing-box 1.14.4's default rule: exact names,
+suffixes and IP CIDRs within one default condition are ORed, then ANDed with its
+port alternatives. Logical nodes explicitly combine complete conditions. Invert
+negates the complete node, including its missing-name/IP alternatives. The first
+explicit match wins. The mandatory sniff/DNS/BitTorrent prefix and final non-public
+Direct/default Proxy behavior do not change.
+
+The native source envelope uses `version:2` and `route_policy` containing native
+predicate schema v1. V1 source profiles still contain only `domain_policy` and keep
+their representation and behavior. Ambiguous envelopes with both policies reject;
+older backends reject v2 instead of discarding its constraints. No saved profile or
+active session is migrated. Domain-only legacy imports still compile to source v1.
+
+Native predicates have at most 64 terminal rules, 128 condition nodes, depth 8,
+256 total name/CIDR/port-interval values and the existing 16-KiB encoded-policy
+budget (also applied to the complete source envelope). Limits are checked both
+during import and by the independent profile model. Public `RoutePolicy` is
+immutable, redacted in Debug, and has no I/O or capability to create sockets.
+
+TCP and UDP both evaluate owned unresolved names with the actual destination port
+before DNS or outbound admission. An unresolved FQDN has no real IP: CIDR
+alternatives do not match it and a FakeIP address is never substituted. No new DNS
+lookup is performed merely to satisfy an IP condition. This is a bounded matcher,
+not full sing-box domain-resolution semantics; general resolve actions are absent.
+With inherited DNS, explicit Direct resolves the original name and evaluates policy again
+against the real destination. An inconsistent final decision refuses the flow,
+never switches it to another outbound. Root repeats the same predicate evaluation;
+public Direct still requires a canonical name and independent selected-resolver
+DNS membership. A CIDR match alone cannot grant unnamed public Direct access.
+
+Inline sets can declare the same bounded destination predicates, including CIDRs,
+ports and nested AND/OR/inversion, without actions or recursive set references.
+All declarations validate even when unused: at most 32 sets, 128 headless nodes,
+depth 8, 128 names, 256 total match values and 16 KiB serialized declarations.
+Only referenced predicates are expanded into the native route tree; unused valid
+destination sets do not change an otherwise legacy source-v1 representation.
+
+Composition preserves the sing-box 1.14.4 set-shape boundary:
+
+- A set with exactly one non-inverted default entry merges its address alternatives
+  with the outer default address group, and its port alternatives with the outer
+  port group. Alternatives within each group are ORed; different groups are ANDed.
+- Multi-entry, logical and inverted sets are self-contained. Their entries are ORed
+  and the set result is ANDed with the complete outer default condition.
+- Referenced tags are separate OR branches. Groups are never pooled across tags;
+  outer inversion applies after the complete reference composition.
+
+Compilation uses the existing native predicate schema, not new worker rules or a
+parallel matcher. Expansion is model-validated incrementally, including repeated
+references, against native tree/value/byte limits before another branch or terminal
+rule is added. Source tags and set containers do not survive in NM data. Recursive,
+remote/local/binary, regex, source-IP remapping and DNS sets remain unsupported.
+
+Verification covers pure import/model semantics, schema/version/budget rejection,
+TCP/UDP dispatch and independent Direct authorization without external traffic.
+The earlier 40-case VM result describes the preceding implementation, not deployed
+acceptance of these new predicates; no new VM run is implied.
+
+Reference: [sing-box v1.14.4 route conditions][destination-rules].
+The [versioned set composition implementation][set-composition] establishes the
+single-default-entry merge boundary; this source was consulted, not copied.
+
+[destination-rules]: https://github.com/SagerNet/sing-box/blob/v1.14.4/docs/configuration/route/rule.md
+[set-composition]: https://github.com/SagerNet/sing-box/blob/v1.14.4/route/rule/rule_item_rule_set.go
+
+## Ordered real-DNS selection in native source-policy v3
+
+Source v3 adds an explicit `dns_policy` (predicate schema v1) and retains exactly
+one of `domain_policy` or `route_policy`. V1/v2 reject nonempty DNS policies; v3
+requires one. Existing profiles keep their encoding and remote-domain behavior;
+old backends reject v3, never silently use only its default resolver. NM remains
+the profile/route/DNS owner. There is no new service, dependency or persistent cache.
+
+The complete importer admits up to 64 ordered exact/suffix real-resolution rules,
+128 total names and eight declared DNS servers including the local/FakeIP roles.
+Names in one rule are ORed with strict label boundaries; the first matching rule
+wins, otherwise the existing `dns.final` real endpoint applies. Each rule selects
+an explicitly checked Direct/Proxy UDP/TCP/DoT/DoH endpoint or `local` (the NM
+uplink's plain IPv4 DNS, always Direct). TLS identity and DoH path belong to each
+endpoint, including a non-default endpoint. Source tags compile to bounded resolver
+indices; they are not runtime authority or stored source identifiers. Native DNS
+policy has at most eight resolver entries and shares the 16-KiB source envelope.
+
+Domain rules must follow both the bootstrap rule and the mandatory client A/AAAA
+FakeIP rule. Modern sources may supply the bootstrap role through
+`route.default_domain_resolver` instead of the legacy `outbound:any` rule. Rules
+before FakeIP, per-domain FakeIP suppression, query-type conditions, DNS logical
+trees/inversion/rule-sets, response actions and non-neutral cache/TTL/ECS modifiers
+reject. This preserves client FakeIP instead of pretending that an earlier real-DNS
+rule has no effect. For real resolution FakeIP is skipped, matching the reference's
+[real-resolution/FakeIP boundary][dns-walk]; no foreign implementation was copied.
+
+With v3, owned FakeIP TCP/UDP destinations resolve their **original** name through
+the selected real resolver even for Proxy; VLESS receives the real IP rather than
+delegating DNS to the peer. Otherwise the explicit resolver choice would be lost.
+Observed names still govern routing independently. Block precedes destination DNS;
+unknown FakeIP never reaches it. Real-IP predicates can match after this required
+query; the generic route `resolve` action is still unsupported. Provisional Direct
+is rechecked after DNS and refuses on disagreement. A DNS failure never retries
+the default resolver, another route, remote-domain VLESS or host DNS.
+
+The privileged transport derives selection again from the validated question and
+immutable activation profile; no worker-supplied resolver index is accepted. Public
+named Direct still requires independent membership in the selected resolver's
+answer for the authorization name. Different original/observed names may therefore
+select different DNS rules and refuse a flow; this does not relax authority.
+Explicit user DNS overrides replace source selection for all real queries, not
+FakeIP/bootstrap. No DHCP DNS address is persisted in the policy.
+
+Cache ownership remains activation-local and question/transport-bound. Since
+selection is deterministic from the immutable profile and question, an identical
+cache key cannot change resolver within that cache. Uplink/profile replacement
+creates a fresh authority/cache. Responses require the original question/answer
+chain; errors, cancellation and timeouts publish no entry or application socket.
+
+Local evidence covers import/version/budget rejection, canonical selection,
+NM writer/observer/executable-admission round trips without policy/secret loss,
+original-name TCP/UDP pre-resolution, override precedence, Direct DNS membership,
+cache separation and failure/timeout/cancellation without fallback. It does not
+extend the earlier VM result to v3 or establish positive encrypted-DNS peer/native
+desktop interoperability. No new VM campaign or host-network activation is required.
+
+[dns-walk]: https://github.com/SagerNet/sing-box/blob/v1.14.4/dns/router.go
+
+### Source DNS exchanges
 
 DoH uses RFC 8484 POST over certificate-verified HTTP/1.1, one approved socket,
 no redirect/retry/environment proxy and no fallback. Default port/path is 443 and

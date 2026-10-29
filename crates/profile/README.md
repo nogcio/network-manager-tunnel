@@ -117,6 +117,30 @@ acceptance are in [ADR 0016](../../docs/decisions/0016-persistent-ipv4-fakeip.md
 
 ## Execution-facing views
 
+Complete source-policy v2 adds native `RoutePolicy` destination predicates: exact/
+suffix domains, IPv4 CIDRs, destination ports/ranges and logical AND/OR/inversion.
+Address alternatives within a default rule are ORed, then ANDed with its port
+alternatives; the first matching terminal rule wins. The public matcher has no I/O
+or socket authority. Root independently repeats policy and selected-resolver DNS
+membership checks before public named Direct. CIDR matches alone do not authorize
+unnamed public Direct.
+
+Unresolved names have no real IP; FakeIP is never used for CIDR matching. Inherited
+DNS does not resolve solely for an IP predicate. A provisional named Direct route
+is checked again after resolving its original name; disagreement refuses the flow
+without another outbound. The native envelope uses `route_policy` only with source
+version 2 (or DNS version 3); v1 retains `domain_policy`, and both together reject.
+Existing profiles are not migrated; old backends reject v2/v3. Full limits and
+unsupported combinations are in [ADR 0020][destination-predicates].
+
+Complete import also compiles bounded inline sets into this same tree. A single
+non-inverted default set entry merges like groups with its outer rule; multi-entry,
+logical and inverted sets remain independent AND constraints. Different referenced
+tags remain OR branches, not pooled groups. No source set tag, local path, remote
+fetch or binary-set parser is added to this model or its runtime consumers.
+
+[destination-predicates]: ../../docs/decisions/0020-native-ipv4-source-policy.md#destination-predicates-in-native-source-policy-v2
+
 `SourceDns` separates socket IP/optional bootstrap hostname, TLS verification name,
 selected Direct/proxy route and wire transport. `SourceDns::validated` is shared by
 native profile admission and import of every declared resolver, including unused
@@ -127,6 +151,18 @@ it is omitted from older non-HTTPS JSON so legacy profile encoding stays unchang
 Non-HTTPS policies reject nonempty HTTP paths. Debug redacts these identifying
 settings. Validation has no I/O and never upgrades/migrates active or stored profiles;
 the older backend rejects the unknown HTTPS transport instead of downgrading it.
+
+Source v3 additionally stores bounded ordered exact/suffix DNS rules. `dns_for`
+returns the first matching `SourceDnsSelection` (a checked endpoint or the NM
+current-network role), otherwise `dns()` supplies the default real endpoint.
+`has_dns_rules()` requires TCP/UDP Proxy destinations to pre-resolve their original
+owned name instead of bypassing this selection with remote VLESS DNS. The rule tree
+and DNS policy remain immutable; selection has no I/O or socket authority. Runtime
+overrides explicitly replace real-DNS selection; bootstrap and client FakeIP remain
+separate. See [ADR 0020][dns-selection]
+for bounds, ordering, cache/Direct authority and unsupported DNS behavior.
+
+[dns-selection]: ../../docs/decisions/0020-native-ipv4-source-policy.md#ordered-real-dns-selection-in-native-source-policy-v3
 
 `Profile::routing` exposes checked `RoutingPolicy` semantics rather than a source
 format or NM schema version. `Profile::lan_bypass` returns one mutually exclusive

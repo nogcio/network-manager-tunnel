@@ -8,6 +8,7 @@ mod dns;
 pub(crate) mod fixtures;
 mod integration;
 mod outbounds;
+mod route_rules;
 mod routing;
 mod rule_sets;
 mod value;
@@ -131,7 +132,7 @@ fn translate(document: &CompleteConfiguration) -> Result<Subscription, PolicyIss
         .map(dns::options::resolver)
         .transpose()?
         && let Some(rules) = dns_value.get_mut("rules").and_then(Value::as_array_mut)
-        && rules.len() == 1
+        && !rules.iter().any(|rule| rule.get("outbound").is_some())
     {
         rules.insert(0, serde_json::json!({"outbound":"any", "server":resolver}));
     }
@@ -149,11 +150,16 @@ fn translate(document: &CompleteConfiguration) -> Result<Subscription, PolicyIss
         document.experimental.as_ref(),
         document.log.as_ref(),
     )?;
-    let encoded = serde_json::to_string(&serde_json::json!({
-        "version":1, "dns":dns.upstream, "domain_policy":domains, "fakeip_range":dns.range,
+    let mut native = serde_json::json!({
+        "version":domains.version, "dns":dns.upstream, "fakeip_range":dns.range,
         "tun_address":tun.address, "tun_prefix":tun.prefix, "mtu":tun.mtu,
-    }))
-    .map_err(|_| PolicyIssue::Configuration)?;
+    });
+    native[domains.field] = serde_json::Value::String(domains.encoded);
+    if let Some(policy) = dns.policy {
+        native["version"] = serde_json::json!(3);
+        native["dns_policy"] = policy;
+    }
+    let encoded = serde_json::to_string(&native).map_err(|_| PolicyIssue::Configuration)?;
     let policy = nm_tunnel_profile::SourcePolicy::from_json(&encoded)
         .map_err(|_| PolicyIssue::Configuration)?;
     let mut profiles = Vec::new();

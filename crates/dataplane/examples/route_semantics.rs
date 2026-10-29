@@ -53,6 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     let host = Observe {
+        refuse_dns: false,
         original: args[1].clone(),
         route: Mutex::new(None),
         queries: Mutex::new(0),

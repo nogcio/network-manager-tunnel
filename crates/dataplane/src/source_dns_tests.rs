@@ -3,6 +3,187 @@ use std::net::Ipv4Addr;
 
 struct Refuse;
 
+fn split_profile() -> io::Result<Profile> {
+    let mut draft = source_profile()?.to_draft();
+    let mut value: serde_json::Value =
+        serde_json::from_str(draft.source_policy.as_ref().ok_or_else(failed)?.as_json())
+            .map_err(io::Error::other)?;
+    value["version"] = serde_json::json!(3);
+    value["dns_policy"] = serde_json::json!({"version":1,
+        "resolvers":[{"type":"current_network"},{"type":"endpoint","dns":{"address":"8.8.8.8","port":53,"transport":"tcp","via_proxy":false,"tls_name":""}}],
+        "rules":[{"domain":["direct.example"],"resolver":1},{"domain_suffix":["work.example"],"resolver":0}]
+    });
+    draft.source_policy = Some(
+        nm_tunnel_profile::SourcePolicy::from_json(&value.to_string()).map_err(io::Error::other)?,
+    );
+    draft.validate().map_err(|_| failed())
+}
+
+#[tokio::test]
+async fn split_selection_cache_and_direct_membership_use_the_question_not_worker_metadata()
+-> io::Result<()> {
+    use hickory_proto::rr::{RData, Record, rdata::A};
+    use nm_tunnel_profile::{DnsOverride, DnsTransport, SourceDnsSelection};
+    use std::sync::Mutex;
+    struct Answers(Mutex<Vec<String>>);
+    #[async_trait::async_trait]
+    impl Exchange for Answers {
+        async fn exchange(
+            &self,
+            profile: &Profile,
+            bytes: &[u8],
+            tcp: bool,
+        ) -> io::Result<Vec<u8>> {
+            let mut query = dns::parse_query(bytes)?;
+            let (route, ip) = match selected_upstream(profile, bytes, tcp)? {
+                SourceDnsSelection::CurrentNetwork {} => ("network", [192, 0, 2, 1]),
+                SourceDnsSelection::Endpoint { dns } if !dns.via_proxy => {
+                    assert_eq!(dns.transport, DnsTransport::Tcp);
+                    ("direct", [203, 0, 113, 2])
+                }
+                SourceDnsSelection::Endpoint { .. } => ("proxy", [203, 0, 113, 3]),
+            };
+            self.0.lock().map_err(|_| failed())?.push(route.into());
+            query.metadata.message_type = hickory_proto::op::MessageType::Response;
+            query.add_answer(Record::from_rdata(
+                query.queries[0].name().clone(),
+                60,
+                RData::A(A(ip.into())),
+            ));
+            query.to_vec().map_err(io::Error::other)
+        }
+    }
+    let profile = split_profile()?;
+    let mut resolver = Resolver::new(profile.clone(), Answers(Mutex::new(Vec::new())));
+    for (name, ip) in [
+        ("work.example", [192, 0, 2, 1]),
+        ("other.example", [203, 0, 113, 3]),
+        ("direct.example", [203, 0, 113, 2]),
+    ] {
+        let (id, bytes) = dns::query(name)?;
+        for _ in 0..2 {
+            let answer = resolver.query(&bytes, false).await?;
+            assert!(dns::direct_dns_answer(
+                id,
+                name,
+                std::net::IpAddr::V4(ip.into()),
+                &answer
+            )?);
+        }
+    }
+    assert!(
+        resolver
+            .authorize_direct(Some("direct.example"), ([203, 0, 113, 3], 443).into())
+            .await
+            .is_err()
+    );
+    resolver
+        .authorize_direct(Some("direct.example"), ([203, 0, 113, 2], 443).into())
+        .await?;
+    assert_eq!(
+        *resolver.transport.0.lock().map_err(|_| failed())?,
+        ["network", "proxy", "direct"]
+    );
+    assert_eq!(resolver.cache.len(), 3);
+    assert!(selected_upstream(&profile, b"invalid", false).is_err());
+    for override_dns in [
+        DnsOverride::CurrentNetwork,
+        DnsOverride::ProxyIpv4([9, 9, 9, 9].into()),
+    ] {
+        let mut draft = profile.to_draft();
+        draft.dns_override = override_dns;
+        let overridden = draft.validate().map_err(|_| failed())?;
+        for name in ["work.example", "direct.example", "other.example"] {
+            let (_, bytes) = dns::query(name)?;
+            match selected_upstream(&overridden, &bytes, true)? {
+                SourceDnsSelection::CurrentNetwork {} => {
+                    assert_eq!(override_dns, DnsOverride::CurrentNetwork)
+                }
+                SourceDnsSelection::Endpoint { dns } => {
+                    assert_eq!(dns.address, Ipv4Addr::new(9, 9, 9, 9));
+                    assert!(dns.via_proxy);
+                    assert_eq!(dns.transport, DnsTransport::Tcp);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn selected_split_failure_timeout_and_cancellation_never_try_default_or_publish_cache()
+-> io::Result<()> {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    struct DropLease(Arc<AtomicUsize>);
+    impl Drop for DropLease {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+    struct Pending {
+        calls: AtomicUsize,
+        live: Arc<AtomicUsize>,
+        refuse: bool,
+    }
+    #[async_trait::async_trait]
+    impl Exchange for Pending {
+        async fn exchange(
+            &self,
+            profile: &Profile,
+            bytes: &[u8],
+            tcp: bool,
+        ) -> io::Result<Vec<u8>> {
+            assert!(matches!(
+                selected_upstream(profile, bytes, tcp)?,
+                nm_tunnel_profile::SourceDnsSelection::CurrentNetwork {}
+            ));
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.live.fetch_add(1, Ordering::SeqCst);
+            let _lease = DropLease(self.live.clone());
+            if self.refuse {
+                return Err(failed());
+            }
+            std::future::pending().await
+        }
+    }
+    let (_, bytes) = dns::query("work.example")?;
+    for refuse in [true, false] {
+        let mut resolver = Resolver::new(
+            split_profile()?,
+            Pending {
+                calls: AtomicUsize::new(0),
+                live: Arc::new(AtomicUsize::new(0)),
+                refuse,
+            },
+        );
+        assert!(resolver.query(&bytes, false).await.is_err());
+        assert_eq!(resolver.transport.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(resolver.transport.live.load(Ordering::SeqCst), 0);
+        assert!(resolver.cache.is_empty());
+    }
+    let mut resolver = Resolver::new(
+        split_profile()?,
+        Pending {
+            calls: AtomicUsize::new(0),
+            live: Arc::new(AtomicUsize::new(0)),
+            refuse: false,
+        },
+    );
+    {
+        let query = resolver.query(&bytes, false);
+        tokio::pin!(query);
+        assert!(futures_util::poll!(&mut query).is_pending());
+        // Dropping the caller's future cancels the selected exchange and its lease.
+    }
+    assert_eq!(resolver.transport.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(resolver.transport.live.load(Ordering::SeqCst), 0);
+    assert!(resolver.cache.is_empty());
+    Ok(())
+}
+
 #[tokio::test]
 async fn selected_doh_failure_or_unrelated_response_never_publishes_cache_or_retries()
 -> io::Result<()> {
@@ -125,23 +306,69 @@ async fn a_sniffed_direct_rule_still_requires_independent_destination_dns_member
             message.to_vec().map_err(io::Error::other)
         }
     }
-    let mut resolver = Resolver::new(source_profile()?, SelectedDns(AtomicUsize::new(0)));
-    assert!(
+    for extended in [false, true] {
+        let mut profile = source_profile()?;
+        if extended {
+            let mut draft = profile.to_draft();
+            let mut policy: serde_json::Value =
+                serde_json::from_str(draft.source_policy.as_ref().ok_or_else(failed)?.as_json())
+                    .map_err(io::Error::other)?;
+            policy["version"] = serde_json::json!(2);
+            policy
+                .as_object_mut()
+                .ok_or_else(failed)?
+                .remove("domain_policy");
+            policy["route_policy"] = serde_json::json!({"version":1,"rules":[
+                {"condition":{"type":"logical","mode":"and","rules":[
+                    {"type":"match","domain":["direct.example"],"ip_cidr":["203.0.113.0/24"]},
+                    {"type":"match","ports":[[443,443]]}
+                ]},"action":"direct"}
+            ]})
+            .to_string()
+            .into();
+            draft.source_policy = Some(
+                nm_tunnel_profile::SourcePolicy::from_json(&policy.to_string())
+                    .map_err(io::Error::other)?,
+            );
+            profile = draft.validate().map_err(|_| failed())?;
+        }
+        let mut resolver = Resolver::new(profile, SelectedDns(AtomicUsize::new(0)));
+        assert!(
+            resolver
+                .authorize_direct(
+                    Some("direct.example"),
+                    SocketAddr::from(([203, 0, 113, 1], 443))
+                )
+                .await
+                .is_err()
+        );
         resolver
             .authorize_direct(
                 Some("direct.example"),
-                SocketAddr::from(([203, 0, 113, 1], 443))
+                SocketAddr::from(([203, 0, 113, 2], 443)),
             )
-            .await
-            .is_err()
-    );
-    resolver
-        .authorize_direct(
-            Some("direct.example"),
-            SocketAddr::from(([203, 0, 113, 2], 443)),
-        )
-        .await?;
-    assert_eq!(resolver.transport.0.load(Ordering::SeqCst), 1);
+            .await?;
+        if extended {
+            // CIDR matches do not grant unnamed public Direct, bypass port
+            // constraints, or replace independent selected-resolver membership.
+            assert!(
+                resolver
+                    .authorize_direct(None, SocketAddr::from(([203, 0, 113, 2], 443)))
+                    .await
+                    .is_err()
+            );
+            assert!(
+                resolver
+                    .authorize_direct(
+                        Some("direct.example"),
+                        SocketAddr::from(([203, 0, 113, 2], 80))
+                    )
+                    .await
+                    .is_err()
+            );
+        }
+        assert_eq!(resolver.transport.0.load(Ordering::SeqCst), 1);
+    }
     Ok(())
 }
 

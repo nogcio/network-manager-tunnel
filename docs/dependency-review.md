@@ -178,6 +178,14 @@ it does not install routes. This maintained address utility adds no new package 
 native cost. Standard vulnerability/license/maintenance checks still apply; see
 [ADR 0012](decisions/0012-connected-lan-bypass.md) for privilege and policy bounds.
 
+The profile model also directly consumes the same crates.io ipnet 2.12.2 with
+default features disabled and only `std`: native source-policy v2 validates,
+normalizes and matches IPv4 CIDRs using its `Ipv4Net` type rather than a custom
+address parser. The MIT OR Apache-2.0 source and maintained utility assessment
+above apply. This adds one real-consumer dependency edge, not a new resolved
+package, serde feature, native library or network capability. Standard advisory
+and license checks remain required; matching is not privileged Direct authority.
+
 Durable FakeIP directly consumes the already locked `meow-dns` 0.26.1 at
 `b75aa6db6a0f79101abb68ab5bdcff84f03d07b0`, with default features disabled. Its
 workspace license is MIT OR Apache-2.0; the same maintained fork/source evidence

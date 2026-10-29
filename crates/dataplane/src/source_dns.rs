@@ -4,6 +4,46 @@ use nm_tunnel_profile::Profile;
 use std::{collections::HashMap, io, net::SocketAddr, time::Duration};
 use tokio::time::{Instant, timeout};
 
+/// Derive one real DNS route from the validated question and activation profile.
+/// Overrides replace source selection explicitly. Bootstrap/FakeIP do not enter
+/// this function. The root transport repeats selection, never trusting a worker
+/// resolver index. No I/O or fallback; invalid questions fail before socket work.
+///
+/// # Errors
+/// Returns a redacted error for malformed queries, absent source or invalid names.
+pub fn selected_upstream(
+    profile: &Profile,
+    bytes: &[u8],
+    tcp: bool,
+) -> io::Result<nm_tunnel_profile::SourceDnsSelection> {
+    use nm_tunnel_profile::{DnsOverride, DnsTransport, SourceDns, SourceDnsSelection};
+    let query = dns::parse_query(bytes)?;
+    match profile.network().dns_override() {
+        DnsOverride::CurrentNetwork => Ok(SourceDnsSelection::CurrentNetwork {}),
+        DnsOverride::Inherit => profile
+            .network()
+            .source()
+            .ok_or_else(failed)?
+            .dns_for(&query.queries[0].name.to_ascii())
+            .map_err(|_| failed()),
+        DnsOverride::ProxyIpv4(address) => Ok(SourceDnsSelection::Endpoint {
+            dns: SourceDns {
+                address,
+                host: None,
+                port: 53,
+                transport: if tcp {
+                    DnsTransport::Tcp
+                } else {
+                    DnsTransport::Udp
+                },
+                via_proxy: true,
+                tls_name: String::new(),
+                http_path: String::new(),
+            },
+        }),
+    }
+}
+
 /// Selected DNS transport authority. Implementations derive upstreams from the
 /// checked profile, never caller-supplied resolvers, and own endpoint bypass and
 /// bootstrap. Errors/cancellation must not retry on a different route/resolver.

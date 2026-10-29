@@ -3,6 +3,8 @@
 mod dns;
 #[path = "contracts/policy.rs"]
 mod policy;
+#[path = "contracts/route_policy.rs"]
+mod route_policy;
 #[path = "contracts/source_policy.rs"]
 mod source_policy;
 #[path = "contracts/typed.rs"]

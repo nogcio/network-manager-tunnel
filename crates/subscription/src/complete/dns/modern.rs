@@ -3,19 +3,6 @@ use super::*;
 use serde_json::json;
 
 pub(super) fn parse(value: &Value, outbounds: &Outbounds) -> Result<Dns, PolicyIssue> {
-    let selected = value
-        .get("final")
-        .and_then(Value::as_str)
-        .or_else(|| {
-            value
-                .get("servers")?
-                .as_array()?
-                .first()?
-                .get("tag")?
-                .as_str()
-        })
-        .ok_or(ISSUE)?
-        .to_owned();
     let mut normalized = value.clone();
     let dns = normalized.as_object_mut().ok_or(ISSUE)?;
     // Two competing FakeIP authorities are ambiguous, even if their ranges match.
@@ -153,10 +140,5 @@ pub(super) fn parse(value: &Value, outbounds: &Outbounds) -> Result<Dns, PolicyI
         *value = legacy;
     }
     dns.insert("fakeip".into(), fake.ok_or(PolicyIssue::FakeIp)?);
-    let mut parsed = super::parse_legacy(&normalized, outbounds)?;
-    if let Some(name) = tls_names.remove(&selected) {
-        parsed.upstream.tls_name = name;
-    }
-    parsed.upstream = parsed.upstream.validated().map_err(|_| ISSUE)?;
-    Ok(parsed)
+    super::parse_legacy(&normalized, outbounds, &tls_names)
 }

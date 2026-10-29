@@ -197,3 +197,140 @@ fn unselected_dns_endpoints_receive_the_same_validation_as_the_selected_one()
     }
     Ok(())
 }
+
+#[test]
+fn split_dns_preserves_first_match_detours_tls_and_fakeip_boundary()
+-> Result<(), Box<dyn std::error::Error>> {
+    use nm_tunnel_profile::SourceDnsSelection;
+    for modern in [false, true] {
+        let mut source = if modern {
+            typed("https")?
+        } else {
+            fixtures::configuration()
+        };
+        if modern {
+            source["dns"]["servers"][0]["tls"] = json!({"server_name":"verify.example"});
+            source["dns"]["servers"]
+                .as_array_mut()
+                .ok_or("Servers")?
+                .push(
+                    json!({"type":"tcp","tag":"direct-dns","server":"8.8.8.8","detour":"direct"}),
+                );
+        }
+        source["dns"]["rules"]
+            .as_array_mut()
+            .ok_or("Rules")?
+            .extend([
+                json!({"domain":"exception.work.example","server":"direct-dns","action":"route"}),
+                json!({"domain_suffix":"work.example","server":"local"}),
+                json!({"domain_suffix":".remote.example","server":"remote"}),
+            ]);
+        let before = source.clone();
+        let admitted = admit(&serde_json::to_vec(&source)?)?;
+        for entry in admitted.entries() {
+            let profile = entry.profile().map_err(|_| "Profile")?;
+            let policy = profile.network().source().ok_or("Policy")?;
+            assert!(policy.as_json().contains("\"version\":3"));
+            assert!(matches!(
+                policy.dns_for("WORK.example.")?,
+                SourceDnsSelection::CurrentNetwork {}
+            ));
+            assert!(matches!(
+                policy.dns_for("sub.work.example")?,
+                SourceDnsSelection::CurrentNetwork {}
+            ));
+            let SourceDnsSelection::Endpoint { dns } = policy.dns_for("exception.work.example")?
+            else {
+                return Err("Expected endpoint".into());
+            };
+            assert_eq!(dns.address.to_string(), "8.8.8.8");
+            assert!(!dns.via_proxy);
+            for name in ["notwork.example", "sub.remote.example"] {
+                let SourceDnsSelection::Endpoint { dns } = policy.dns_for(name)? else {
+                    return Err("Expected endpoint".into());
+                };
+                assert!(dns.via_proxy);
+                if modern {
+                    assert_eq!(dns.tls_name, "verify.example");
+                }
+            }
+            assert!(!policy.as_json().contains("direct-dns"));
+            assert_eq!(
+                nm_tunnel_profile::SourcePolicy::from_json(policy.as_json())?.as_json(),
+                policy.as_json()
+            );
+        }
+        assert_eq!(source, before);
+        // A domain rule before client FakeIP would change client A/AAAA behavior.
+        let rule = source["dns"]["rules"]
+            .as_array_mut()
+            .ok_or("Rules")?
+            .pop()
+            .ok_or("Rule")?;
+        source["dns"]["rules"]
+            .as_array_mut()
+            .ok_or("Rules")?
+            .insert(0, rule);
+        assert!(admit(&serde_json::to_vec(&source)?).is_err());
+    }
+    Ok(())
+}
+
+#[test]
+fn split_dns_rejects_missing_targets_modifiers_and_budgets_atomically()
+-> Result<(), Box<dyn std::error::Error>> {
+    let good = fixtures::configuration();
+    let previous = admit(&serde_json::to_vec(&good)?)?;
+    for rule in [
+        json!({"domain":"work.example","server":"missing"}),
+        json!({"domain":"work.example","server":"fake"}),
+        json!({"domain":[],"server":"local"}),
+        json!({"domain":"bad name","server":"local"}),
+        json!({"domain":"work.example","server":"local","query_type":"A"}),
+        json!({"domain":"work.example","server":"local","invert":true}),
+        json!({"domain":"work.example","server":"local","disable_cache":true}),
+        json!({"domain":"work.example","server":"local","action":"evaluate"}),
+        json!({"domain":vec!["work.example";129],"server":"local"}),
+    ] {
+        let mut value = good.clone();
+        value["dns"]["rules"]
+            .as_array_mut()
+            .ok_or("Rules")?
+            .push(rule);
+        let bytes = serde_json::to_vec(&value)?;
+        assert!(admit(&bytes).is_err());
+        assert_eq!(bytes, serde_json::to_vec(&value)?);
+        assert_eq!(previous.supported_count(), 2);
+    }
+    for count in [64, 65] {
+        let mut value = good.clone();
+        value["dns"]["rules"]
+            .as_array_mut()
+            .ok_or("Rules")?
+            .extend(vec![
+                json!({"domain":"work.example","server":"local"});
+                count
+            ]);
+        assert_eq!(admit(&serde_json::to_vec(&value)?).is_ok(), count == 64);
+    }
+    // DNS v3 composes with the destination tree, not just legacy domain routing.
+    let mut value = good;
+    value["dns"]["rules"]
+        .as_array_mut()
+        .ok_or("Rules")?
+        .push(json!({"domain":"work.example","server":"local"}));
+    value["route"]["rules"][3] = json!({"port":443,"outbound":"direct"});
+    let admitted = admit(&serde_json::to_vec(&value)?)?;
+    let policy = admitted.entries()[0]
+        .profile()
+        .map_err(|_| "Profile")?
+        .network()
+        .source()
+        .ok_or("Policy")?;
+    assert!(policy.as_json().contains("route_policy"));
+    assert!(matches!(
+        policy.dns_for("work.example")?,
+        nm_tunnel_profile::SourceDnsSelection::CurrentNetwork {}
+    ));
+    Ok(())
+}

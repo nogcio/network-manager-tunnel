@@ -74,10 +74,10 @@ async fn resolve_inner(
         return Err(io::Error::other("Unowned synthetic destination refused."));
     }
     let name = broker.fake_reverse(ip).await?;
-    if profile
-        .routing()
-        .domain_action(routing_name(profile, Some(&name), observed))
-        == Some(nm_tunnel_profile::DomainAction::Block)
+    if profile.routing().unresolved_action(
+        routing_name(profile, Some(&name), observed),
+        destination.port(),
+    ) == Some(nm_tunnel_profile::DomainAction::Block)
     {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
@@ -130,7 +130,8 @@ pub(crate) enum ProxyDestination {
 /// Resolve only ownership before routing a complete FakeIP TCP/XUDP destination.
 /// Unresolved FQDNs do not match IP-only rules. Direct resolves the original name
 /// through the selected DNS and still requires independent Host authorization.
-/// Explicit DNS overrides retain pre-resolution rather than moving DNS remotely.
+/// Explicit DNS overrides and source DNS rules retain pre-resolution rather than
+/// bypassing the selected DNS by moving resolution to the remote peer.
 pub(crate) async fn prepare_proxy(
     profile: &nm_tunnel_profile::Profile,
     broker: &(impl Host + ?Sized),
@@ -162,15 +163,37 @@ pub(crate) async fn prepare_proxy(
         if nm_tunnel_profile::canonical_domain(&name).as_deref() != Some(name.as_str()) {
             return Err(io::Error::other("Invalid owned destination identity."));
         }
-        match profile
-            .routing()
-            .domain_action(routing_name(profile, Some(&name), observed))
-        {
+        match profile.routing().unresolved_action(
+            routing_name(profile, Some(&name), observed),
+            destination.port(),
+        ) {
             Some(nm_tunnel_profile::DomainAction::Block) => Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "Blocked FakeIP identity.",
             )),
             Some(nm_tunnel_profile::DomainAction::Direct) => {
+                let resolved =
+                    resolve_name(profile, broker, endpoint, destination, lan, name).await?;
+                // A real DNS answer can make an earlier CIDR predicate apply.
+                // Revoke the provisional Direct decision rather than silently
+                // switching outbound after resolving on its behalf.
+                if profile.routing().action(
+                    routing_name(profile, resolved.domain.as_deref(), observed),
+                    resolved.address,
+                ) != nm_tunnel_profile::DomainAction::Direct
+                {
+                    return Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "Resolved Direct policy changed.",
+                    ));
+                }
+                Ok(ProxyDestination::Resolved(resolved))
+            }
+            _ if profile
+                .network()
+                .source()
+                .is_some_and(|policy| policy.has_dns_rules()) =>
+            {
                 resolve_name(profile, broker, endpoint, destination, lan, name)
                     .await
                     .map(ProxyDestination::Resolved)

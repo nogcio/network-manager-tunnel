@@ -59,6 +59,92 @@ fn supported_policy_modes_round_trip_without_schema_or_secret_loss()
 }
 
 #[test]
+fn source_versions_survive_writer_observer_and_service_admission_without_policy_loss()
+-> Result<(), Box<dyn std::error::Error>> {
+    use nm_tunnel_profile::{DomainAction, SourceDnsSelection, SourcePolicy};
+    let domain =
+        r#""{\"version\":1,\"rules\":[{\"domain\":[\"direct.example\"],\"action\":\"direct\"}]}""#;
+    let routes = r#""{\"version\":1,\"rules\":[{\"condition\":{\"type\":\"match\",\"ip_cidr\":[\"203.0.113.0/24\"],\"ports\":[[443,443]]},\"action\":\"block\"}]}""#;
+    let dns_rules = r#", "dns_policy":{"version":1,"resolvers":[{"type":"current_network"}],"rules":[{"domain_suffix":["work.example"],"resolver":0}]}"#;
+    for (version, field, routing, dns) in [
+        (1, "domain_policy", domain, ""),
+        (2, "route_policy", routes, ""),
+        (3, "domain_policy", domain, dns_rules),
+        (3, "route_policy", routes, dns_rules),
+    ] {
+        let source = format!(
+            r#"{{
+            "version":{version},
+            "dns":{{"address":"1.1.1.1","port":853,"transport":"tls","via_proxy":true,"tls_name":"1.1.1.1"}},
+            "{field}":{routing},
+            "fakeip_range":"198.18.0.0/15","tun_address":"172.19.0.1","tun_prefix":30,"mtu":1400
+            {dns}
+        }}"#
+        );
+        let policy = SourcePolicy::from_json(&source)?;
+        let mut draft = draft()?;
+        draft.source_policy = Some(policy.clone());
+        draft.fake_ip = true;
+        draft.dns_interception = true;
+        let profile = draft.validate().map_err(|_| "Invalid fixture")?;
+        let (name, values, secrets) = data(&settings(&profile)?)?;
+        assert_eq!(values["schema-version"], "2");
+        assert_eq!(values["source-policy"], policy.as_json());
+        assert!(
+            !values
+                .values()
+                .any(|value| value.contains("12345678-1234-4234-8234-123456789abc"))
+        );
+        let executable = decode(name.clone(), &values, &secrets)?;
+        let configuration = decode_configuration(name.clone(), &values)?;
+        let observed = decode_policy(&values)?;
+        for decoded in [
+            executable.network().source().ok_or("Executable policy")?,
+            configuration
+                .fields()
+                .source_policy
+                .as_ref()
+                .ok_or("Public policy")?,
+            observed.source().ok_or("Observed policy")?,
+        ] {
+            assert_eq!(decoded.as_json(), policy.as_json());
+            assert_eq!(
+                decoded.action(None, "203.0.113.2:443".parse()?, false),
+                if field == "route_policy" {
+                    DomainAction::Block
+                } else {
+                    DomainAction::Proxy
+                }
+            );
+            assert_eq!(
+                matches!(
+                    decoded.dns_for("sub.work.example")?,
+                    SourceDnsSelection::CurrentNetwork {}
+                ),
+                version == 3
+            );
+        }
+        let (_, encoded, encoded_secrets) = data(&settings(&executable)?)?;
+        assert_eq!(encoded, values);
+        assert_eq!(encoded_secrets, secrets);
+        for (key, value) in [
+            ("schema-version", "1"),
+            ("dns-fakeip", "off"),
+            ("source-policy", "{\"version\":99}"),
+        ] {
+            let mut invalid = values.clone();
+            invalid.insert(key.into(), value.into());
+            let before = invalid.clone();
+            assert!(decode(name.clone(), &invalid, &secrets).is_err());
+            assert!(decode_configuration(name.clone(), &invalid).is_err());
+            assert!(decode_policy(&invalid).is_err());
+            assert_eq!(invalid, before);
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn public_configuration_never_manufactures_an_executable_credential()
 -> Result<(), Box<dyn std::error::Error>> {
     use secrecy::ExposeSecret;

@@ -25,6 +25,12 @@ or a performance measurement. Production appearance follows the desktop theme.*
   supported DNS/FakeIP, ordered routing and XUDP. Unsupported policy rejects atomically.
   DNS includes bounded legacy or sing-box 1.12 typed servers and verified HTTP/1.1
   DoH; general DNS policies and arbitrary modern configurations remain unsupported.
+  Experimental source v2 additionally admits bounded destination IPv4 CIDR/port
+  and logical route conditions, including bounded inline rule-sets.
+  Source v3 adds bounded ordered exact/suffix real-DNS resolver selection, with
+  explicit Direct/Proxy paths while retaining client FakeIP and local bootstrap.
+  Both require the updated backend and have local contract evidence, not the
+  preceding full-VM acceptance.
 - Explicitly select legacy node-only import for plain/base64 VLESS URI lists.
   Search nodes and add individual profiles, without the provider's DNS/routing rules.
 - Connect and disconnect saved profiles without loading the subscription again.
