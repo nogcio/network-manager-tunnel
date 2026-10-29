@@ -1,4 +1,4 @@
-//! Connected-LAN route planning only. NetworkManager installs all normal routes.
+//! Pure IPv4 capture/LAN bypass planning. NetworkManager installs all normal routes.
 use ipnet::{Ipv4Net, Ipv4Subnets};
 use std::{io, net::Ipv4Addr};
 
@@ -177,6 +177,7 @@ impl Plan {
 
     /// Bounded VPN routes: a disjoint LAN complement normally, or a full IPv4
     /// cover with more-specific connected-LAN halves when interception is enabled.
+    /// No /0: full coverage uses two /1s so physical default metrics cannot win.
     /// Protected/FakeIP destinations must never escape via physical default.
     /// NM routes are destination/prefix/next-hop/metric; addresses use network byte order.
     pub fn routes(&self) -> Vec<Vec<u32>> {
@@ -245,7 +246,7 @@ pub(crate) fn valid_interface(value: &str) -> bool {
 }
 
 fn append(routes: &mut Vec<Vec<u32>>, start: u32, end: u32) {
-    for net in Ipv4Subnets::new(start.into(), end.into(), 0) {
+    for net in Ipv4Subnets::new(start.into(), end.into(), 1) {
         append_route(routes, net);
     }
 }
@@ -275,6 +276,25 @@ impl nm_tunnel_dataplane::LanScope for Plan {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ordinary_capture_beats_any_physical_default_without_granting_direct_authority()
+    -> io::Result<()> {
+        let plan = Plan::default();
+        assert_eq!(
+            plan.routes(),
+            vec![
+                vec![u32::from_ne_bytes([0, 0, 0, 0]), 1, 0, 0],
+                vec![u32::from_ne_bytes([128, 0, 0, 0]), 1, 0, 0],
+            ]
+        );
+        assert!(!plan.enabled(), "route capture does not enable LAN bypass");
+        assert!(plan.guard_rule("enp1s0")?.is_empty());
+        for destination in ["1.1.1.1:53", "198.51.100.10:443", "192.168.1.1:80"] {
+            assert!(!plan.authorizes(destination.parse().map_err(io::Error::other)?));
+        }
+        Ok(())
+    }
 
     #[test]
     fn private_mode_excludes_rfc1918_routes_and_scopes_non_dns_root_authority() -> io::Result<()> {

@@ -76,6 +76,16 @@ async fn only_current_nm_owner_can_control_lifecycle() -> Result<(), Box<dyn std
             .call("NeedSecrets", &(crate::test_support::settings()?,))
             .await?;
         assert_eq!(required, "vpn");
+        for flag in ["1", "2"] {
+            let mut settings = crate::test_support::settings()?;
+            let (_, mut data, _) = crate::schema::data(&settings)?;
+            data.insert("uuid-flags".into(), flag.into());
+            settings.get_mut("vpn").ok_or("Missing VPN")?.insert("data".into(), OwnedValue::try_from(zbus::zvariant::Value::from(data))?);
+            let required: String = valid.call("NeedSecrets", &(settings,)).await?;
+            assert_eq!(required, "", "agent modes must reach the UUID-hinted interactive handshake");
+        }
+        let rejected: zbus::Result<()> = proxy.call("NewSecrets", &(Settings::new(),)).await;
+        assert!(matches!(rejected, Err(zbus::Error::MethodError(ref name, _, _)) if name.as_str() == "org.freedesktop.DBus.Error.AccessDenied"));
         let mut invalid = crate::test_support::settings()?;
         invalid.get_mut("vpn").ok_or("Missing VPN")?.insert(
             "secrets".into(),
@@ -132,6 +142,23 @@ async fn only_current_nm_owner_can_control_lifecycle() -> Result<(), Box<dyn std
         assert_eq!(state.load(Ordering::SeqCst), 1);
         let _: () = valid.call("Disconnect", &()).await?;
         assert!(matches!(rx.recv().await, Some(Request::Stop)));
+        let mut interactive = crate::test_support::settings()?;
+        interactive.get_mut("connection").ok_or("Missing connection")?.insert("uuid".into(),
+            OwnedValue::from(zbus::zvariant::Str::from("12345678-1234-4234-8234-123456789aaa")));
+        let details: Config = Config::new();
+        let args = (interactive, details);
+        let call = valid.call::<_, _, ()>("ConnectInteractive", &args);
+        tokio::pin!(call);
+        let request = tokio::select! {
+            result = &mut call => return Err(format!("Interactive request completed before lifecycle admission: {result:?}").into()),
+            request = rx.recv() => request,
+        };
+        let Some(Request::Authenticate(id, config, reply)) = request else { return Err("Missing interactive credential admission".into()); };
+        assert_eq!(id, "12345678-1234-4234-8234-123456789aaa");
+        assert!(config.secrets.is_empty());
+        assert_eq!(state.load(Ordering::SeqCst), 1);
+        reply.send(Err("Synthetic admission rejection.")).map_err(|_| "Missing reply")?;
+        assert!(call.await.is_err());
         owner.release_name(NM).await?;
         stranger.request_name(NM).await?;
         let result: zbus::Result<()> = valid.call("Disconnect", &()).await;

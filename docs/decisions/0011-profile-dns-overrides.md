@@ -83,14 +83,12 @@ The supervisor owns/closes upstream sockets; none survive session teardown.
 
 ## Readiness and compatibility
 
-Default/manual modes retain a bounded proxied DNS exchange, now using the selected
-upstream instead of an unconditional constant. CurrentNetwork cannot certify a proxy
-using direct DNS success alone: it resolves the existing probe name `example.com`
-through the selected DNS, then performs a certificate-verified TLS handshake to
-that name on port 443 **through VLESS**. The pinned TLS library owns the handshake,
-verification is explicitly enabled and the engine deadline is ten seconds inside
-the overall probe bound. No HTTP request or direct TCP fallback. This proves only
-one TCP/TLS exchange, not UDP, completed NM routing or leak prevention.
+All modes use the destination-free readiness contract in
+[ADR 0032](0032-destination-free-readiness.md): verify the configured peer's secure
+transport, without DNS/application test destinations. Neither DNS success nor a
+transport handshake proves VLESS UUID acceptance or Internet forwarding. Resolver
+availability and response binding are checked by real DNS requests; failures never
+select another resolver or physical fallback.
 
 Manual through-VPN DNS currently conflicts with Direct hostname rules: independent
 Direct authorization still resolves through uplink DNS. Reject that combination

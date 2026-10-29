@@ -140,8 +140,23 @@ pub struct Snapshot {
 /// Rejection never falls back to memory. Cancellation/timeout can leave a completed
 /// remote save: the outcome is indeterminate and must never be retried automatically.
 pub async fn save_profile(profile: Profile) -> Result<SavedProfile, ClientError> {
+    save_profile_with_options(profile, crate::ProfileOptions::default()).await
+}
+
+/// Explicitly save a new profile with standard NM agent/system/prompt flags and
+/// an optional persistent session lifetime. NM owns persistence and agent calls;
+/// no direct keyring access, fallback, autoconnect or existing-profile migration.
+/// A registered agent is required for agent-owned/not-saved activation. Like
+/// [`save_profile`], timeout/cancellation leaves an unknown write outcome: never
+/// retry automatically. One total twenty-second deadline covers the operation.
+pub async fn save_profile_with_options(
+    profile: Profile,
+    options: crate::ProfileOptions,
+) -> Result<SavedProfile, ClientError> {
     tokio::time::timeout(TIMEOUT, async {
-        Mutation::new(&Bus::system().await?).save(&profile).await
+        Mutation::new(&Bus::system().await?)
+            .save_with_options(&profile, options)
+            .await
     })
     .await
     .map_err(|_| ClientError::Timeout)?
@@ -149,8 +164,9 @@ pub async fn save_profile(profile: Profile) -> Result<SavedProfile, ClientError>
 /// Explicitly replace the VPN/IPv4/IPv6 settings of a freshly observed saved profile.
 /// Keeps its NM UUID, name, permissions and other connection-level settings; replaces
 /// transport, credentials, DNS/routing policy and IP overrides with the supplied
-/// validated profile. Callers must disclose those replacements and NM disk secret
-/// storage before confirmation. No secrets are retrieved, no VPN is reconnected,
+/// validated profile. Credential ownership and persistent lifetime are retained.
+/// Callers must disclose replacement and the retained storage mode before confirmation.
+/// No secrets are retrieved, no VPN is reconnected,
 /// and no host routes/DNS/firewall are changed by this client.
 ///
 /// Requires a nonzero NM VersionId from `snapshot` and Update2's version-id check

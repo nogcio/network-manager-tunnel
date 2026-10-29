@@ -1,5 +1,6 @@
 use nm_tunnel_engine::{
     EndpointStream, Error, connect_tcp, connect_tcp_domain, connect_udp, connect_udp_domain,
+    verify_peer_transport,
 };
 use nm_tunnel_profile::{Draft, Profile, Security};
 use std::{
@@ -11,6 +12,39 @@ use tokio::{
     net::{TcpListener, TcpStream},
     time::timeout,
 };
+
+#[tokio::test(start_paused = true)]
+async fn destination_free_peer_verification_rejects_mismatch_and_owns_cancellation_and_timeout()
+-> Result<(), Box<dyn std::error::Error>> {
+    let endpoint: SocketAddr = "192.0.2.1:443".parse()?;
+    for case in 0..3 {
+        let profile = profile(endpoint)?;
+        let (stream, mut peer) = tokio::net::UnixStream::pair()?;
+        let socket = EndpointStream::relayed(stream, endpoint)?;
+        let approved = if case == 0 {
+            "192.0.2.2:443".parse()?
+        } else {
+            endpoint
+        };
+        let task =
+            tokio::spawn(async move { verify_peer_transport(&profile, socket, approved).await });
+        if case == 0 {
+            assert!(matches!(task.await?, Err(Error::Endpoint)));
+            assert_eq!(peer.read(&mut [0]).await?, 0);
+        } else {
+            assert_eq!(peer.read_u8().await?, 22, "Only configured-peer TLS begins");
+            if case == 1 {
+                task.abort();
+                assert!(task.await.is_err_and(|e| e.is_cancelled()));
+            } else {
+                tokio::time::advance(Duration::from_secs(10)).await;
+                assert!(matches!(task.await?, Err(Error::Timeout)));
+            }
+            timeout(Duration::from_secs(1), peer.read_to_end(&mut Vec::new())).await??;
+        }
+    }
+    Ok(())
+}
 
 fn profile(endpoint: SocketAddr) -> Result<Profile, Box<dyn std::error::Error>> {
     Draft {

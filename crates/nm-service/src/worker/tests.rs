@@ -139,37 +139,44 @@ async fn intercepted_tcp_dns_uses_selected_resolver_before_hostname_inspection_o
 }
 
 #[tokio::test]
-async fn current_network_dns_readiness_failure_never_falls_back_to_the_legacy_proxy_resolver()
--> io::Result<()> {
+async fn readiness_endpoint_refusal_never_queries_any_resolver_or_destination() -> io::Result<()> {
     timeout(Duration::from_secs(3), async {
-        let mut draft = routed_profile("block")?.to_draft();
-        draft.dns_override = nm_tunnel_profile::DnsOverride::CurrentNetwork;
-        let profile = draft
-            .validate()
-            .map_err(|_| io::Error::other("Invalid DNS fixture."))?;
-        let (client, mut server) = UnixStream::pair()?;
-        let broker = Arc::new(Broker::new(client));
-        let probe_broker = Arc::clone(&broker);
-        let pending = tokio::spawn(async move {
-            probe(
-                &profile,
-                &probe_broker,
-                "192.0.2.1:443".parse().map_err(io::Error::other)?,
-            )
-            .await
-        });
-        assert_eq!(server.read_u8().await?, b'Q');
-        assert_eq!(server.read_u8().await?, 0);
-        let size = server.read_u16().await? as usize;
-        let mut query = vec![0; size];
-        server.read_exact(&mut query).await?;
-        assert!(dns::parse_query(&query).is_ok());
-        server.write_all(b"N").await?;
-        assert!(pending.await.map_err(io::Error::other)?.is_err());
-        assert!(!broker.poisoned.load(Ordering::SeqCst));
-        assert!(
-            matches!(server.try_read(&mut [0]), Err(e) if e.kind() == io::ErrorKind::WouldBlock)
-        );
+        let mut profiles = vec![crate::test_support::source_profile()?];
+        for dns in [
+            nm_tunnel_profile::DnsOverride::Inherit,
+            nm_tunnel_profile::DnsOverride::CurrentNetwork,
+            nm_tunnel_profile::DnsOverride::ProxyIpv4("9.9.9.9".parse().map_err(io::Error::other)?),
+        ] {
+            let mut draft = routed_profile("block")?.to_draft();
+            draft.dns_override = dns;
+            // The manual override cannot coexist with a Direct rule.
+            draft.tcp_domain_policy = None;
+            profiles.push(
+                draft
+                    .validate()
+                    .map_err(|_| io::Error::other("Invalid DNS fixture."))?,
+            );
+        }
+        for profile in profiles {
+            let (client, mut server) = UnixStream::pair()?;
+            let broker = Arc::new(Broker::new(client));
+            let probe_broker = Arc::clone(&broker);
+            let pending = tokio::spawn(async move {
+                probe(
+                    &profile,
+                    &probe_broker,
+                    "192.0.2.1:443".parse().map_err(io::Error::other)?,
+                )
+                .await
+            });
+            assert_eq!(server.read_u8().await?, b'O');
+            server.write_all(b"N").await?;
+            assert!(pending.await.map_err(io::Error::other)?.is_err());
+            assert!(!broker.poisoned.load(Ordering::SeqCst));
+            assert!(
+                matches!(server.try_read(&mut [0]), Err(e) if e.kind() == io::ErrorKind::WouldBlock)
+            );
+        }
         Ok(())
     })
     .await

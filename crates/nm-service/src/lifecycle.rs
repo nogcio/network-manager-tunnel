@@ -19,12 +19,42 @@ use zbus::object_server::SignalEmitter;
 
 pub(crate) enum Request {
     Start(WorkerConfig, oneshot::Sender<Result<(), &'static str>>),
+    Authenticate(
+        String,
+        WorkerConfig,
+        oneshot::Sender<Result<(), &'static str>>,
+    ),
+    Secrets(
+        String,
+        WorkerConfig,
+        oneshot::Sender<Result<(), &'static str>>,
+    ),
     Stop,
 }
 
 struct Preparation {
     task: AbortTask<Result<Session, supervisor::Failure>>,
     cancel: oneshot::Sender<()>,
+}
+
+fn launch(bus: &zbus::Connection, config: WorkerConfig, telemetry: &Telemetry) -> Preparation {
+    let (cancel, cancelled) = oneshot::channel();
+    Preparation {
+        cancel,
+        task: AbortTask(tokio::spawn(supervisor::prepare(
+            bus.clone(),
+            config,
+            telemetry.clone(),
+            cancelled,
+        ))),
+    }
+}
+
+async fn await_authentication(pending: &Option<crate::authentication::Pending>) {
+    match pending {
+        Some(pending) => tokio::time::sleep_until(pending.deadline).await,
+        None => std::future::pending().await,
+    }
 }
 
 async fn await_preparation(
@@ -104,6 +134,10 @@ pub(crate) async fn run(
         .map_err(|_| zbus::Error::Failure("Executable generation unavailable.".into()))?;
     let mut pending = None;
     let mut session: Option<Session> = None;
+    // The applied configuration belongs to this admitted lifetime, not a saved
+    // profile reread: editing a profile never changes a recovering connection.
+    let mut intent: Option<WorkerConfig> = None;
+    let mut authentication: Option<crate::authentication::Pending> = None;
     let mut cleanup = None;
     let mut failed = false;
     let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(2));
@@ -120,6 +154,7 @@ pub(crate) async fn run(
         Cleaned(io::Result<()>),
         Shutdown,
         Heartbeat,
+        AuthenticationExpired,
     }
     loop {
         let event = tokio::select! {
@@ -128,6 +163,7 @@ pub(crate) async fn run(
             _ = await_worker(&mut session) => Event::Worker,
             result = await_cleanup(&mut cleanup) => Event::Cleaned(result),
             _ = heartbeat.tick() => Event::Heartbeat,
+            _ = await_authentication(&authentication) => Event::AuthenticationExpired,
             _ = tokio::signal::ctrl_c() => Event::Shutdown,
             _ = termination.recv() => Event::Shutdown,
             signal = owners.next() => {
@@ -139,7 +175,7 @@ pub(crate) async fn run(
                 if idle_generation_boundary(
                     state.load(Ordering::SeqCst),
                     pending.is_some(),
-                    session.is_some(),
+                    session.is_some() || authentication.is_some(),
                     cleanup.is_some(),
                 ) && image.replaced()
                 {
@@ -156,6 +192,29 @@ pub(crate) async fn run(
                             )
                         })?;
                 }
+                if let (Some(active), Some(config)) = (session.as_ref(), intent.as_ref())
+                    && config.persistent
+                    && supervisor::changed(&bus, active, config).await
+                {
+                    let active = session.take().ok_or_else(|| {
+                        zbus::Error::Failure("Session ownership unavailable.".into())
+                    })?;
+                    let (cancel, cancelled) = oneshot::channel();
+                    pending = Some(Preparation {
+                        cancel,
+                        task: AbortTask(tokio::spawn(supervisor::resume(
+                            bus.clone(),
+                            active,
+                            config.clone(),
+                            telemetry.clone(),
+                            cancelled,
+                        ))),
+                    });
+                    telemetry.state("connecting");
+                    // This is the same persistent NM packet-device lifetime,
+                    // not a second activation. Keep NM's active state while
+                    // capabilities are revoked; telemetry reports recovery.
+                }
             }
             Event::Request(Some(Request::Start(config, reply))) => {
                 if reply.is_closed() {
@@ -164,7 +223,7 @@ pub(crate) async fn run(
                 if idle_generation_boundary(
                     state.load(Ordering::SeqCst),
                     pending.is_some(),
-                    session.is_some(),
+                    session.is_some() || authentication.is_some(),
                     cleanup.is_some(),
                 ) && image.replaced()
                 {
@@ -174,7 +233,7 @@ pub(crate) async fn run(
                 if let Err(error) = admit_start(
                     &state,
                     pending.is_some() || cleanup.is_some(),
-                    session.is_some(),
+                    session.is_some() || authentication.is_some(),
                 ) {
                     let _ = reply.send(Err(error));
                     continue;
@@ -182,18 +241,72 @@ pub(crate) async fn run(
                 plugin::change(&bus, &state, 3).await?;
                 failed = false;
                 telemetry.begin();
-                let (cancel, cancelled) = oneshot::channel();
-                pending = Some(Preparation {
-                    cancel,
-                    task: AbortTask(tokio::spawn(supervisor::prepare(
-                        bus.clone(),
-                        config,
-                        telemetry.clone(),
-                        cancelled,
-                    ))),
-                });
+                intent = config.persistent.then(|| config.clone());
+                pending = Some(launch(&bus, config, &telemetry));
                 // Admission transfers ownership to this loop even if the caller disappears.
                 let _ = reply.send(Ok(()));
+            }
+            Event::Request(Some(Request::Authenticate(id, config, reply))) => {
+                if reply.is_closed() {
+                    continue;
+                }
+                if idle_generation_boundary(
+                    state.load(Ordering::SeqCst),
+                    pending.is_some(),
+                    session.is_some() || authentication.is_some(),
+                    cleanup.is_some(),
+                ) && image.replaced()
+                {
+                    let _ = reply.send(Err("Backend updated; retry through NetworkManager."));
+                    return Ok(());
+                }
+                if let Err(error) = admit_start(
+                    &state,
+                    pending.is_some() || cleanup.is_some() || authentication.is_some(),
+                    session.is_some(),
+                ) {
+                    let _ = reply.send(Err(error));
+                    continue;
+                }
+                authentication = Some(crate::authentication::Pending::new(id, config));
+                failed = false;
+                telemetry.begin();
+                plugin::change(&bus, &state, 3).await?;
+                Plugin::secrets_required(
+                    &SignalEmitter::new(&bus, PATH)?,
+                    "VLESS UUID credential required.",
+                    vec!["uuid"],
+                )
+                .await?;
+                let _ = reply.send(Ok(()));
+            }
+            Event::Request(Some(Request::Secrets(id, config, reply))) => {
+                if reply.is_closed() {
+                    continue;
+                }
+                let completed = authentication
+                    .as_ref()
+                    .ok_or("No pending credential request.")
+                    .and_then(|request| request.complete(&id, &config));
+                match completed {
+                    Ok(config) => {
+                        authentication = None;
+                        intent = config.persistent.then(|| config.clone());
+                        pending = Some(launch(&bus, config, &telemetry));
+                        let _ = reply.send(Ok(()));
+                    }
+                    Err(error) => {
+                        let _ = reply.send(Err(error));
+                    }
+                }
+            }
+            Event::AuthenticationExpired => {
+                authentication = None;
+                intent = None;
+                failed = true;
+                telemetry.state("failed");
+                Plugin::failure(&SignalEmitter::new(&bus, PATH)?, 0).await?;
+                plugin::change(&bus, &state, 6).await?;
             }
             Event::Prepared(result) => {
                 pending = None;
@@ -218,6 +331,7 @@ pub(crate) async fn run(
                         return Err(shutdown_failure(error));
                     }
                     Err(supervisor::Failure::Activation(error)) => {
+                        intent = None;
                         failed = true;
                         telemetry.state("stopping");
                         Plugin::failure(&SignalEmitter::new(&bus, PATH)?, 1).await?;
@@ -234,6 +348,7 @@ pub(crate) async fn run(
                 }
             }
             Event::Worker => {
+                intent = None;
                 failed = true;
                 telemetry.state("stopping");
                 if let Some(active) = session.take() {
@@ -247,6 +362,8 @@ pub(crate) async fn run(
                 eprintln!("VPN worker stopped unexpectedly; automatic cleanup started.");
             }
             Event::Request(Some(Request::Stop)) => {
+                authentication = None;
+                intent = None;
                 telemetry.state("stopping");
                 plugin::change(&bus, &state, 5).await?;
                 cancel_preparation(&mut pending).await?;

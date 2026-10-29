@@ -13,7 +13,7 @@ pub use doh::exchange_doh;
 pub use endpoint::EndpointStream;
 pub use hostname::{TcpHostname, inspect_tcp_hostname};
 pub use quic_hostname::QuicHostname;
-pub use verify::{verify_tls_peer, wrap_verified_tls};
+pub use verify::{verify_peer_transport, wrap_verified_tls};
 
 use meow_common::{Metadata, ProxyAdapter, ProxyConn};
 use std::{
@@ -138,6 +138,24 @@ async fn connect_tcp_metadata(
     endpoint: SocketAddr,
     metadata: Metadata,
 ) -> Result<Tunnel, Error> {
+    let socket = checked_endpoint(profile, socket, endpoint)?;
+    let adapter = adapter::build(profile)?;
+    let raw = Box::new(meow_proxy::StreamConn(socket.inner));
+    let stream = tokio::time::timeout(
+        Duration::from_secs(10),
+        adapter.connect_over(raw, &metadata),
+    )
+    .await
+    .map_err(|_| Error::Timeout)?
+    .map_err(|_| Error::Handshake)?;
+    Ok(Tunnel(stream))
+}
+
+fn checked_endpoint(
+    profile: &nm_tunnel_profile::Profile,
+    socket: impl TryInto<EndpointStream>,
+    endpoint: SocketAddr,
+) -> Result<EndpointStream, Error> {
     let socket = socket.try_into().map_err(|_| Error::Endpoint)?;
     let node = profile.node();
     if socket.peer != endpoint
@@ -149,16 +167,7 @@ async fn connect_tcp_metadata(
     {
         return Err(Error::Endpoint);
     }
-    let adapter = adapter::build(profile)?;
-    let raw = Box::new(meow_proxy::StreamConn(socket.inner));
-    let stream = tokio::time::timeout(
-        Duration::from_secs(10),
-        adapter.connect_over(raw, &metadata),
-    )
-    .await
-    .map_err(|_| Error::Timeout)?
-    .map_err(|_| Error::Handshake)?;
-    Ok(Tunnel(stream))
+    Ok(socket)
 }
 
 fn io_result<T>(result: io::Result<T>) -> io::Result<T> {

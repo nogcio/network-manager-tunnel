@@ -141,7 +141,10 @@ NM still installs normal routes/DNS. Selected-uplink connected/static prefixes a
 captured with more-specific VPN routes; `/31` and `/32` capture rejects. Capture
 prefixes never grant Direct authority or physical firewall exceptions. Source TUN
 and FakeIP namespace conflicts reject before TUN/firewall setup. Legacy LAN/TCP
-overlays cannot combine with this policy. Uplink changes require reconnect.
+overlays cannot combine with this policy. Persistent NM sessions rebuild these
+plans and revoke all old sockets/caches on uplink changes under
+[ADR 0033](0033-persistent-network-lifetime-and-nm-agents.md); nonpersistent profiles
+still require an explicit reconnect.
 
 UDP uses the pinned protocol library's VLESS CommandMux/Mux.Cool XUDP path,
 one supplied endpoint stream and one logical datagram flow per association.

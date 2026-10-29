@@ -2,10 +2,12 @@
 mod broker;
 mod plan;
 mod resources;
+mod roaming;
 mod session;
 mod tun;
 pub(crate) mod uplink_dns;
 
+pub(crate) use roaming::{changed, resume};
 pub(crate) use session::Session;
 
 /// Only an activation failure with confirmed teardown permits guard cleanup.

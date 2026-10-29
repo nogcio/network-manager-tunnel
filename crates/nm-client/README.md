@@ -3,7 +3,8 @@
 Unprivileged D-Bus client on `zbus` 5.19. Pure schema-v1/v2 encoding is owned by the
 [shared NM contract](../nm-schema/README.md), separate from
 explicit async storage/control and read-only NM metadata observation. No direct
-route/DNS/firewall changes, secret retrieval, credential agent or keyring access.
+route/DNS/firewall changes, secret retrieval, competing credential agent or direct
+VPN keyring access.
 
 Service identity is experimental `org.freedesktop.NetworkManager.tunnel`.
 The experimental backend owns it when running. Save creates a new NM connection UUID;
@@ -26,6 +27,16 @@ permissions; the client never writes profile files itself. This is not desktop
 secret-agent/keyring storage or encrypted-at-rest storage. A refused disk save
 never falls back to memory. There is no session-only save API. Existing in-memory
 profiles can still be observed/controlled, but are not automatically migrated.
+
+`save_profile_with_options` adds explicit standard `CredentialStorage::System`,
+`Agent` and `Ask` flags plus NM's persistent-session option. The COSMIC save path
+uses Agent and persistent lifetime for new profiles, with disclosure before Add.
+The existing API keeps its defaults. NM routes credentials to a registered desktop
+agent; this client never accesses a VPN keyring. Agent availability/prompt/keyring
+acceptance is not proved by a settings-write reply. Failure does not select system
+storage. A persistent admitted lifetime survives network loss under its guard until
+recovery or explicit Disconnect; it does not enable autoconnect. See
+[ADR 0033](../../docs/decisions/0033-persistent-network-lifetime-and-nm-agents.md).
 
 ## Observation and explicit control
 
@@ -114,7 +125,9 @@ dependency, native library or privileged service API is added. See
 Editing preserves all other NM fields and includes no secrets, relying on NM's
 documented/inspected retain-existing-secrets behavior. Source refresh instead supplies
 the admitted new source credentials, retaining the NM name/UUID/ACL, IP dictionaries
-and compatible existing DNS/LAN/protection overrides. New mandatory-policy conflicts
+and compatible existing DNS/LAN/protection overrides. Credential storage mode and
+persistent lifetime also survive both source updates and checked replacement.
+New mandatory-policy conflicts
 reject before writes. Both use expected VersionId and Update2 flags `0x61`, never
 reconnect and never perform fallible post-write reads or guess the next version.
 Confirmed success requires a new snapshot before another checked mutation.
@@ -142,7 +155,8 @@ This verifies definite refusal, not desktop Polkit prompts or active-session edi
 narrow edit and mapped update APIs above. It keeps the NM UUID, name, connection ACL and other
 connection-level settings, but **replaces the entire VPN/IPv4/IPv6 sections**,
 including old custom overrides, with the selected validated profile. The caller
-must disclose this and system-stored credentials before confirmation. No GetSecrets,
+must disclose replacement and the retained credential storage mode before confirmation.
+No GetSecrets,
 automatic activation, reconnect, fallback or independent profile storage is added.
 
 Replacement requires a fresh snapshot with nonzero VersionId (NM 1.44+). Reads are

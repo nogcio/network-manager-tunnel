@@ -44,9 +44,9 @@ stops retries. Disconnect or terminal failure stops owned resources and retries
 guard cleanup automatically. Fatal runtime failure ends the session, not a hidden
 NM reactivation. Ordinary networking then resumes without VPN. Backend process
 death transfers orphan cleanup to the independently restarted helper. This replaces
-retained-failure/manual recovery. Bounded synthetic legacy IPv4 VM checks passed
-TUN TCP echo, SIGKILL orphan cleanup and SIGSTOP watchdog cleanup; broader packet
-coverage and helper-restart races remain pending.
+retained-failure/manual recovery. Bounded synthetic IPv4 VM checks exercise
+TUN TCP/UDP/DNS, SIGKILL orphan cleanup, SIGSTOP watchdog cleanup and recovery-helper
+restart during traffic; broader failure races and coexistence remain pending.
 The helper also detects a lifecycle loop that stops renewing its 30-second lease,
 even if it retains its bus name. It pins the backend through D-Bus `ProcessFD`, sends
 terminal SIGKILL only through that handle and waits for confirmed process exit before
@@ -57,6 +57,14 @@ cleanup remains visible for 30 seconds after orphan cleanup. Signaling, system-b
 activation/confinement and native packet ordering still require broader review and
 acceptance; the VM result does not timestamp every process/packet transition.
 See [ADR 0026](../../docs/decisions/0026-automatic-session-recovery.md).
+
+The maintained [offline VM suite](../../docs/testing/vm-acceptance.md) exercises
+real NM/TUN TCP/UDP/DNS, bounded physical packet isolation, clean/crash/watchdog
+teardown, recovery restart, endpoint refusal, active image replacement and unchanged
+TUN-collision rejection. It uses a disposable guest without QEMU networking and
+does not change the host VPN. LAN modes, domain actions and persistent FakeIP have
+separate native scenarios. These bounded fixtures do not establish every supported
+source policy, trusted DoH, roaming, reboot or desktop acceptance.
 
 Preparation and active sessions retain an external resource owner across cancelled
 setup and broker futures. Shutdown confirms worker exit, joins the broker and both
@@ -87,8 +95,15 @@ test checks rejection, unchanged lifecycle state and NM name-owner replacement.
 One activation is allowed at a time; the lifecycle owner acknowledges admission
 in queue order with Disconnect, and owns preparation even if its caller goes away.
 Profiles and credentials come from NM;
-there is no parallel profile store. Interactive secret-agent requests are not
-implemented; NM must supply `vpn.secrets.uuid` before Connect.
+there is no parallel profile store. Interactive secret-agent requests are
+owned by the desktop's registered NM agent, not a competing Tunnel process.
+System-stored credentials still arrive before Connect. For agent-owned/not-saved
+profiles, ConnectInteractive can reserve a bounded credential-request slot and
+emit SecretsRequired with the exact `uuid` hint. NewSecrets must match the admitted
+NM connection identity and configuration before preparation can allocate resources.
+Invalid/late replies cannot mutate that slot. Disconnect, NM cancellation and the
+120-second request deadline retire it. An absent agent never selects system-secret
+storage. See [ADR 0033](../../docs/decisions/0033-persistent-network-lifetime-and-nm-agents.md).
 
 The root supervisor selects NM's primary uplink and IPv4 nameserver, creates the
 TUN and an nftables guard, and retains marked/uplink-bound TCP sockets behind
@@ -97,8 +112,13 @@ profiles permit only the fixed VPN endpoint; optional schema-v2 TCP domain rules
 add bounded, independently revalidated Direct grants, described below. DNS
 bootstrap uses that nameserver, a marked socket and a bounded A query; no general
 system resolver or destination dialer is used. The endpoint address is fixed for
-one activation. Uplink changes, endpoint rotation and IPv6 endpoints are not
-supported; connections must be explicitly reactivated.
+one prepared transport generation. Persistent NM sessions revoke old capabilities
+on uplink/address/resolver/gateway changes and rebuild under the existing guards
+and TUN until recovery or explicit Disconnect. Normal physical-primary observations
+run on the two-second lifecycle heartbeat. Failed observations also revoke stale
+authority. Old flows are closed, not replayed. Nonpersistent profiles keep their
+previous teardown behavior. Independent endpoint rotation and IPv6 endpoints remain
+unsupported.
 
 The child runs as `nm-tunnel`, with no supplementary groups or capabilities,
 no-new-privileges and parent-death SIGKILL. TUN and the private control channel
@@ -123,10 +143,13 @@ The TCP task limit leaves headroom below the pinned Linux lwIP pool of 1024 TCP
 PCBs for handshakes and closing states. It is an admission bound, not a verified
 capacity or throughput guarantee; full admission drops new flows without direct fallback.
 The engine independently bounds protocol setup to ten seconds.
-Default/manual DNS readiness requires a real proxied DNS exchange. CurrentNetwork
-DNS resolves the probe name through the uplink and verifies destination TLS through
-VLESS; direct DNS success alone is not proxy readiness.
-Health checks normally wait 20 seconds between probes, have a 15-second deadline
+Readiness checks only the configured endpoint's TLS/REALITY and optional WebSocket
+transport, plus durable local FakeIP/reverse ownership when enabled. No control
+domain, upstream DNS test query or destination TLS connection is generated.
+VLESS/Vision credential acceptance can remain deferred until actual application
+I/O: Connected does not certify credentials, DNS availability or Internet access.
+See [ADR 0032](../../docs/decisions/0032-destination-free-readiness.md).
+Endpoint health checks normally wait 20 seconds between probes, have a 15-second deadline
 including broker queueing and never overlap. Transient probe failures retain the
 session, TUN, routes and guards; subsequent probes use fresh upstream connections
 after 40 seconds, then at most 60 seconds between attempts. Success restores the
@@ -147,6 +170,12 @@ error entirely; a runtime stage is not necessarily an activation/setup failure.
 Probing does not block TCP admission, UDP dispatch or flow reaping.
 NM receives Config, Ip4Config and STARTED
 in that order, then owns routes, interface IP/MTU and resolver configuration.
+All route plans report `never-default=true` and explicit capture routes; ordinary
+full-tunnel profiles use two IPv4 /1s, independent of physical default metrics or
+NM connectivity-check penalties. LAN complements and source connected-prefix
+capture retain their existing scope. More-specific unrelated physical routes can
+still refuse traffic through the guard, never authorize fallback. Marked root-owned
+endpoint/Direct sockets keep their existing uplink authority.
 
 ## Read-only usage telemetry
 
@@ -316,13 +345,13 @@ have five-second deadlines, worker exchanges have ten seconds, and 32 extra UDP
 DNS tasks share the broker budget. Uncertain cancellation poisons the FD channel;
 explicit refusal does not. Invalid input creates no privileged socket.
 
-CurrentNetwork readiness uses the selected DNS for `example.com`, then a
-certificate-verified TLS handshake to that name on port 443 through VLESS. No HTTP
-request or direct TCP fallback. This verifies one TCP/TLS path, not UDP or host
-policy. Bounds, compatibility and missing VM acceptance are in
-[ADR 0011](../../docs/decisions/0011-profile-dns-overrides.md). Full configuration
-execution and FakeIP remain unsupported; overrides do not bypass
-complete-configuration admission.
+CurrentNetwork readiness verifies only the configured VPN endpoint, without a DNS
+test query or application destination. Real requests independently exercise the
+selected uplink resolver; its failure never selects a public fallback. See
+[ADR 0032](../../docs/decisions/0032-destination-free-readiness.md) and the override
+bounds in [ADR 0011](../../docs/decisions/0011-profile-dns-overrides.md).
+Overrides do not bypass complete-configuration admission; only checked source-policy
+combinations can execute with persistent FakeIP.
 
 ### Connected RFC1918 LAN bypass
 

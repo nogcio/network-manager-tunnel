@@ -7,6 +7,31 @@ use zbus::zvariant::Value;
 /// D-Bus settings contain credentials. Debug output is always redacted.
 pub struct EncodedProfile(HashMap<String, HashMap<String, Value<'static>>>);
 
+/// Standard NM secret flags; the desktop's registered agent owns keyring/prompt
+/// behavior. No application-side VPN credential store or plaintext fallback.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CredentialStorage {
+    /// NM system settings storage (flag NONE). Existing profiles keep this mode.
+    #[default]
+    System,
+    /// Delegate to a registered desktop NM agent (flag AGENT_OWNED).
+    Agent,
+    /// Request credentials as needed; never persist them (flag NOT_SAVED).
+    Ask,
+}
+
+/// Explicit creation policy, separate from provider-controlled protocol fields.
+/// Defaults preserve the legacy system-storage/nonpersistent lifetime. Persistence
+/// keeps an admitted session protected across network loss until Disconnect; it
+/// does not enable startup/autoconnect or silently change an existing profile.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ProfileOptions {
+    /// NM credential ownership/persistence, never application-managed storage.
+    pub credentials: CredentialStorage,
+    /// Retain the admitted VPN lifetime across physical network loss.
+    pub persistent: bool,
+}
+
 impl std::fmt::Debug for EncodedProfile {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("EncodedProfile([redacted])")
@@ -26,6 +51,12 @@ impl EncodedProfile {
 /// are independently generated. Autoconnect is always disabled; IP policy is
 /// full-tunnel IPv4 DNS priority excludes other NM DNS servers while activated.
 pub fn encode_profile(profile: &Profile) -> EncodedProfile {
+    encode_profile_with_options(profile, ProfileOptions::default())
+}
+
+/// Encode explicit NM storage/lifetime choices. The caller must disclose these
+/// choices before saving; success is serialization, not agent/keyring acceptance.
+pub fn encode_profile_with_options(profile: &Profile, options: ProfileOptions) -> EncodedProfile {
     let draft = profile.to_draft();
     let mut data = HashMap::<String, String>::from([
         (
@@ -71,7 +102,15 @@ pub fn encode_profile(profile: &Profile) -> EncodedProfile {
         ),
         ("alpn".into(), draft.alpn.clone()),
         // NM secret flags: NONE = stored by the settings service, not agent-owned.
-        ("uuid-flags".into(), "0".into()),
+        (
+            "uuid-flags".into(),
+            match options.credentials {
+                CredentialStorage::System => "0",
+                CredentialStorage::Agent => "1",
+                CredentialStorage::Ask => "2",
+            }
+            .into(),
+        ),
     ]);
     if let Some(policy) = &draft.tcp_domain_policy {
         data.insert("tcp-domain-policy".into(), policy.as_json().into());
@@ -112,11 +151,14 @@ pub fn encode_profile(profile: &Profile) -> EncodedProfile {
         ("type".into(), Value::from("vpn".to_owned())),
         ("autoconnect".into(), Value::from(false)),
     ]);
-    let vpn = HashMap::from([
+    let mut vpn = HashMap::from([
         ("service-type".into(), Value::from(SERVICE_TYPE.to_owned())),
         ("data".into(), Value::from(data)),
         ("secrets".into(), Value::from(secrets)),
     ]);
+    if options.persistent {
+        vpn.insert("persistent".into(), Value::from(true));
+    }
     EncodedProfile(HashMap::from([
         ("connection".into(), connection),
         ("vpn".into(), vpn),
@@ -138,6 +180,48 @@ pub fn encode_profile(profile: &Profile) -> EncodedProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_agent_prompt_and_persistent_modes_never_change_legacy_defaults()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let profile = nm_tunnel_profile::import_vless("vless://12345678-1234-4234-8234-123456789abc@proxy.example:443?security=tls&sni=peer.example")?.validate().map_err(|_| "Invalid fixture")?;
+        let original = encode_profile(&profile);
+        for (credentials, flag) in [
+            (CredentialStorage::System, "0"),
+            (CredentialStorage::Agent, "1"),
+            (CredentialStorage::Ask, "2"),
+        ] {
+            let encoded = encode_profile_with_options(
+                &profile,
+                ProfileOptions {
+                    credentials,
+                    persistent: true,
+                },
+            );
+            let settings: crate::Settings = encoded
+                .values()
+                .iter()
+                .map(|(section, values)| {
+                    let values = values
+                        .iter()
+                        .map(|(key, value)| Ok((key.clone(), value.try_to_owned()?)))
+                        .collect::<Result<_, zbus::zvariant::Error>>()?;
+                    Ok((section.clone(), values))
+                })
+                .collect::<Result<_, zbus::zvariant::Error>>()?;
+            let (name, data, secrets) = crate::data(&settings)?;
+            assert_eq!(data.get("uuid-flags").map(String::as_str), Some(flag));
+            assert!(!data.values().any(|v| v.contains("12345678-1234")));
+            crate::decode(name, &data, &secrets)?;
+            assert_eq!(bool::try_from(&settings["vpn"]["persistent"]), Ok(true));
+            assert_eq!(
+                bool::try_from(&settings["connection"]["autoconnect"]),
+                Ok(false)
+            );
+        }
+        assert!(!original.values()["vpn"].contains_key("persistent"));
+        Ok(())
+    }
 
     #[test]
     fn explicit_dns_interception_alone_selects_v2_without_an_upstream_snapshot()

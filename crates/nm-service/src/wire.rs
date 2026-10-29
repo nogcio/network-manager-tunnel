@@ -31,6 +31,9 @@ pub(crate) struct WorkerConfig {
     /// Activation-local NM snapshot, not persisted profile data or authority for
     /// the supervisor. Only present for combined LAN + DNS interception.
     pub lan: Vec<(std::net::Ipv4Addr, u8)>,
+    /// NM's explicit per-connection persistent lifetime, not worker authority.
+    #[serde(default)]
+    pub persistent: bool,
 }
 
 /// A request is not authority: the supervisor rechecks its own validated policy

@@ -41,12 +41,21 @@ impl Plugin {
         Ok(())
     }
 
-    async fn start(&self, settings: Settings, header: &Header<'_>) -> zbus::fdo::Result<()> {
+    async fn start(
+        &self,
+        settings: Settings,
+        header: &Header<'_>,
+        interactive: bool,
+    ) -> zbus::fdo::Result<()> {
         self.authorize(header).await?;
         let (name, data, secrets) = schema::data(&settings).map_err(bad)?;
-        let profile = schema::decode(name.clone(), &data, &secrets).map_err(bad)?;
-        nm_tunnel_engine::validate_profile(&profile)
-            .map_err(|_| bad("Unsupported engine configuration."))?;
+        schema::decode_configuration(name.clone(), &data).map_err(bad)?;
+        let missing = missing_credential(&secrets).map_err(bad)?;
+        if !missing || !interactive {
+            let profile = schema::decode(name.clone(), &data, &secrets).map_err(bad)?;
+            nm_tunnel_engine::validate_profile(&profile)
+                .map_err(|_| bad("Unsupported engine configuration."))?;
+        }
         schema::ip_policy(&settings).map_err(bad)?;
         let config = WorkerConfig {
             name,
@@ -56,10 +65,16 @@ impl Plugin {
                 .parse()
                 .map_err(|_| bad("Internal address failed."))?,
             lan: Vec::new(),
+            persistent: connection_persistent(&settings).map_err(bad)?,
         };
         let (reply, admitted) = oneshot::channel();
+        let request = if missing {
+            Request::Authenticate(connection_id(&settings).map_err(bad)?, config, reply)
+        } else {
+            Request::Start(config, reply)
+        };
         self.requests
-            .send(Request::Start(config, reply))
+            .send(request)
             .await
             .map_err(|_| bad("VPN lifecycle is unavailable."))?;
         admitted
@@ -72,6 +87,32 @@ impl Plugin {
 fn denied() -> zbus::fdo::Error {
     zbus::fdo::Error::AccessDenied("Only NetworkManager may control this plugin.".into())
 }
+
+fn connection_persistent(settings: &Settings) -> Result<bool, &'static str> {
+    settings
+        .get("vpn")
+        .and_then(|vpn| vpn.get("persistent"))
+        .map(|value| bool::try_from(value).map_err(|_| "Invalid VPN persistence setting."))
+        .transpose()
+        .map(|value| value.unwrap_or(false))
+}
+
+fn connection_id(settings: &Settings) -> Result<String, &'static str> {
+    let id = settings
+        .get("connection")
+        .and_then(|s| s.get("uuid"))
+        .and_then(|v| <&str>::try_from(v).ok())
+        .ok_or("Missing NM connection identity.")?;
+    uuid::Uuid::parse_str(id).map_err(|_| "Invalid NM connection identity.")?;
+    Ok(id.to_owned())
+}
+
+fn missing_credential(secrets: &schema::Strings) -> Result<bool, &'static str> {
+    if secrets.keys().any(|key| key != "uuid") {
+        return Err("Unsupported secrets.");
+    }
+    Ok(secrets.get("uuid").is_none_or(String::is_empty))
+}
 fn bad(message: &'static str) -> zbus::fdo::Error {
     zbus::fdo::Error::InvalidArgs(message.into())
 }
@@ -83,7 +124,7 @@ impl Plugin {
         connection: Settings,
         #[zbus(header)] header: Header<'_>,
     ) -> zbus::fdo::Result<()> {
-        self.start(connection, &header).await
+        self.start(connection, &header, false).await
     }
     async fn connect_interactive(
         &self,
@@ -91,7 +132,7 @@ impl Plugin {
         _details: Config,
         #[zbus(header)] header: Header<'_>,
     ) -> zbus::fdo::Result<()> {
-        self.start(connection, &header).await
+        self.start(connection, &header, true).await
     }
     async fn need_secrets(
         &self,
@@ -101,17 +142,21 @@ impl Plugin {
         self.authorize(&header).await?;
         let (name, data, secrets) = schema::data(&settings).map_err(bad)?;
         schema::decode_configuration(name.clone(), &data).map_err(bad)?;
-        if secrets.get("uuid").is_some_and(|value| !value.is_empty()) {
+        let missing = missing_credential(&secrets).map_err(bad)?;
+        if !missing {
             schema::decode(name, &data, &secrets).map_err(bad)?;
-        } else if secrets.keys().any(|key| key != "uuid") {
-            return Err(bad("Unsupported secrets."));
         }
-        Ok(if secrets.get("uuid").is_none_or(String::is_empty) {
-            "vpn"
-        } else {
-            ""
-        }
-        .into())
+        // Agent-owned/not-saved credentials use ConnectInteractive followed by
+        // SecretsRequired with the exact UUID key. A generic pre-connect prompt
+        // has no key hints and desktop agents can otherwise assume "password".
+        Ok(
+            if missing && data.get("uuid-flags").is_none_or(|flag| flag == "0") {
+                "vpn"
+            } else {
+                ""
+            }
+            .into(),
+        )
     }
     async fn disconnect(&self, #[zbus(header)] header: Header<'_>) -> zbus::fdo::Result<()> {
         self.authorize(&header).await?;
@@ -122,11 +167,38 @@ impl Plugin {
     }
     async fn new_secrets(
         &self,
-        _connection: Settings,
+        connection: Settings,
         #[zbus(header)] header: Header<'_>,
     ) -> zbus::fdo::Result<()> {
         self.authorize(&header).await?;
-        Err(bad("Secrets must be supplied before Connect."))
+        let (name, data, secrets) = schema::data(&connection).map_err(bad)?;
+        let profile = schema::decode(name.clone(), &data, &secrets).map_err(bad)?;
+        nm_tunnel_engine::validate_profile(&profile)
+            .map_err(|_| bad("Unsupported engine configuration."))?;
+        schema::ip_policy(&connection).map_err(bad)?;
+        let config = WorkerConfig {
+            name,
+            data,
+            secrets,
+            endpoint: "0.0.0.0:0"
+                .parse()
+                .map_err(|_| bad("Internal address failed."))?,
+            lan: Vec::new(),
+            persistent: connection_persistent(&connection).map_err(bad)?,
+        };
+        let (reply, received) = oneshot::channel();
+        self.requests
+            .send(Request::Secrets(
+                connection_id(&connection).map_err(bad)?,
+                config,
+                reply,
+            ))
+            .await
+            .map_err(|_| bad("VPN lifecycle is unavailable."))?;
+        received
+            .await
+            .map_err(|_| bad("VPN lifecycle is unavailable."))?
+            .map_err(bad)
     }
     #[zbus(property)]
     fn state(&self) -> u32 {
@@ -140,6 +212,12 @@ impl Plugin {
     async fn ip4_config(emitter: &SignalEmitter<'_>, config: Config) -> zbus::Result<()>;
     #[zbus(signal)]
     pub(crate) async fn failure(emitter: &SignalEmitter<'_>, reason: u32) -> zbus::Result<()>;
+    #[zbus(signal)]
+    pub(crate) async fn secrets_required(
+        emitter: &SignalEmitter<'_>,
+        message: &str,
+        secrets: Vec<&str>,
+    ) -> zbus::Result<()>;
 }
 
 pub(crate) async fn change(
@@ -180,7 +258,7 @@ pub(crate) async fn announce(
             ),
             ("has-ip4".into(), OwnedValue::from(true)),
             ("has-ip6".into(), OwnedValue::from(false)),
-            ("can-persist".into(), OwnedValue::from(false)),
+            ("can-persist".into(), OwnedValue::from(true)),
         ]),
     )
     .await?;
@@ -202,16 +280,14 @@ pub(crate) async fn announce(
             OwnedValue::from(source_policy.map_or(32, |policy| u32::from(policy.tun_prefix()))),
         ),
         ("dns".into(), dns),
-        ("never-default".into(), OwnedValue::from(lan.enabled())),
+        ("never-default".into(), OwnedValue::from(true)),
     ]);
     if source_policy.is_some() {
         config.remove("ptp");
     }
-    if lan.enabled() {
-        config.insert(
-            "routes".into(),
-            OwnedValue::try_from(zbus::zvariant::Value::from(lan.routes()))?,
-        );
-    }
+    config.insert(
+        "routes".into(),
+        OwnedValue::try_from(zbus::zvariant::Value::from(lan.routes()))?,
+    );
     Plugin::ip4_config(&emitter, config).await
 }

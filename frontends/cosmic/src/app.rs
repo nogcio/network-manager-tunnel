@@ -553,7 +553,16 @@ impl cosmic::Application for App {
                     self.reads.invalidate();
                     self.status = fl!("saving-profile-status");
                     return cosmic::task::future(async move {
-                        Message::Prepared(nm_tunnel_client::save_profile(profile).await)
+                        Message::Prepared(
+                            nm_tunnel_client::save_profile_with_options(
+                                profile,
+                                nm_tunnel_client::ProfileOptions {
+                                    credentials: nm_tunnel_client::CredentialStorage::Agent,
+                                    persistent: true,
+                                },
+                            )
+                            .await,
+                        )
                     });
                 }
             }

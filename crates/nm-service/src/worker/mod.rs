@@ -68,7 +68,12 @@ async fn probe(
     broker: &Broker,
     endpoint: SocketAddr,
 ) -> io::Result<()> {
-    probe_upstream(profile, broker, endpoint).await?;
+    STAGE.store(10, Ordering::SeqCst);
+    let socket = broker.open_endpoint(endpoint).await?;
+    STAGE.store(11, Ordering::SeqCst);
+    nm_tunnel_engine::verify_peer_transport(profile, socket, endpoint)
+        .await
+        .map_err(|_| io::Error::other("Configured peer transport verification failed."))?;
     if profile.network().fake_ip() {
         let (id, query) = dns::dns_query()?;
         let response = broker.fake_dns(&query).await?;
@@ -80,67 +85,6 @@ async fn probe(
             return Err(io::Error::other("FakeIP ownership mismatch."));
         }
     }
-    Ok(())
-}
-
-async fn probe_upstream(
-    profile: &nm_tunnel_profile::Profile,
-    broker: &Broker,
-    endpoint: SocketAddr,
-) -> io::Result<()> {
-    if profile.network().dns_override() == nm_tunnel_profile::DnsOverride::CurrentNetwork
-        || profile.network().source().is_some()
-    {
-        let (id, query) = dns::dns_query()?;
-        STAGE.store(12, Ordering::SeqCst);
-        let response = broker.query_dns(&query, false).await?;
-        STAGE.store(14, Ordering::SeqCst);
-        let address = dns::dns_answer(id, &response)?
-            .into_iter()
-            .find(|ip| {
-                nm_tunnel_profile::DnsOverride::ProxyIpv4(*ip)
-                    .validate()
-                    .is_ok()
-            })
-            .ok_or_else(|| io::Error::other("No public readiness destination."))?;
-        STAGE.store(10, Ordering::SeqCst);
-        let socket = broker.open_endpoint(endpoint).await?;
-        STAGE.store(11, Ordering::SeqCst);
-        let tunnel = nm_tunnel_engine::connect_tcp(
-            profile,
-            socket,
-            endpoint,
-            SocketAddr::from((address, 443)),
-        )
-        .await
-        .map_err(|_| io::Error::other("Proxy TCP readiness failed."))?;
-        return nm_tunnel_engine::verify_tls_peer(tunnel, dns::PROBE_HOST)
-            .await
-            .map_err(|_| io::Error::other("Verified destination TLS readiness failed."));
-    }
-    STAGE.store(10, Ordering::SeqCst);
-    let socket = broker.open_endpoint(endpoint).await?;
-    STAGE.store(11, Ordering::SeqCst);
-    let udp = nm_tunnel_engine::connect_udp(
-        profile,
-        socket,
-        endpoint,
-        SocketAddr::from((dns::profile_dns(profile.network().dns_override()), 53)),
-    )
-    .await
-    .map_err(|_| io::Error::other("Proxy UDP setup failed."))?;
-    let (id, query) = dns::dns_query()?;
-    STAGE.store(12, Ordering::SeqCst);
-    udp.send(&query)
-        .await
-        .map_err(|_| io::Error::new(io::ErrorKind::ConnectionAborted, "Proxy DNS send failed."))?;
-    STAGE.store(13, Ordering::SeqCst);
-    let response = timeout(Duration::from_secs(5), udp.receive())
-        .await
-        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Proxy DNS timeout."))?
-        .map_err(|_| io::Error::other("Proxy DNS refused."))?;
-    STAGE.store(14, Ordering::SeqCst);
-    dns::dns_answer(id, &response)?;
     Ok(())
 }
 

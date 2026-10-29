@@ -1,0 +1,429 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 36d1af9..46e0bdc 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -4,6 +4,17 @@ All notable changes to the `nmrs` crate will be documented in this file.
+
+ ## [Unreleased]
+
++### Added
++
++- Optional desktop-owned `SecretStore` persistence with original NM payloads,
++  bounded completion before SaveSecrets/DeleteSecrets success, and redacted errors.
++- VPN request metadata exposes per-secret NM flags for safe keyring lookup.
++
++### Fixed
++
++- Authenticate all secret-agent methods against the current NetworkManager D-Bus
++  owner before forwarding requests or allowing credential-store access.
++
+ ## [3.5.5] - 2026-09-27
+
+ ### Fixed
+diff --git a/nmrs/src/agent/builder.rs b/nmrs/src/agent/builder.rs
+index d011758..d67e17b 100644
+--- a/nmrs/src/agent/builder.rs
++++ b/nmrs/src/agent/builder.rs
+@@ -130,12 +130,21 @@ impl SecretAgent {
+ /// | capabilities | [`SecretAgentCapabilities::VPN_HINTS`] |
+ /// | object path | `/org/freedesktop/NetworkManager/SecretAgent` |
+ /// | queue depth | 32 |
+-#[derive(Debug)]
+ pub struct SecretAgentBuilder {
+     identifier: String,
+     capabilities: SecretAgentCapabilities,
+     object_path: String,
+     queue_depth: usize,
++    store: Option<Arc<dyn super::SecretStore>>,
++}
++
++impl std::fmt::Debug for SecretAgentBuilder {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.debug_struct("SecretAgentBuilder")
++            .field("identifier", &self.identifier)
++            .field("has_store", &self.store.is_some())
++            .finish_non_exhaustive()
++    }
+ }
+
+ impl Default for SecretAgentBuilder {
+@@ -145,11 +154,21 @@ impl Default for SecretAgentBuilder {
+             capabilities: SecretAgentCapabilities::VPN_HINTS,
+             object_path: DEFAULT_OBJECT_PATH.into(),
+             queue_depth: DEFAULT_QUEUE_DEPTH,
++            store: None,
+         }
+     }
+ }
+
+ impl SecretAgentBuilder {
++    /// Configure a durable consumer. Save/Delete await it before replying to NM;
++    /// storage errors and the agent deadline become a redacted D-Bus failure.
++    /// Without this option the existing notification-only behavior is retained.
++    #[must_use]
++    pub fn with_store(mut self, store: Arc<dyn super::SecretStore>) -> Self {
++        self.store = Some(store);
++        self
++    }
++
+     /// Sets the identifier passed to NetworkManager for this agent.
+     ///
+     /// This is not a D-Bus bus name and `nmrs` will not try to own it on the
+@@ -213,6 +232,7 @@ impl SecretAgentBuilder {
+             request_tx,
+             cancel_tx,
+             store_tx,
++            store: self.store,
+             pending: Arc::new(Mutex::new(HashMap::new())),
+             next_request_id: AtomicU64::new(1),
+             response_timeout: crate::types::constants::timeouts::secret_agent_response_timeout(),
+diff --git a/nmrs/src/agent/iface.rs b/nmrs/src/agent/iface.rs
+index a031320..11f2d12 100644
+--- a/nmrs/src/agent/iface.rs
++++ b/nmrs/src/agent/iface.rs
+@@ -31,6 +31,8 @@ pub(crate) enum SecretAgentDBusError {
+     ZBus(zbus::Error),
+     UserCanceled(String),
+     NoSecrets(String),
++    PermissionDenied(String),
++    Failed(String),
+ }
+
+ type PendingKey = (String, String);
+@@ -53,12 +55,94 @@ pub(crate) struct SecretAgentInterface {
+     pub(crate) request_tx: mpsc::Sender<SecretRequest>,
+     pub(crate) cancel_tx: mpsc::UnboundedSender<CancelReason>,
+     pub(crate) store_tx: mpsc::UnboundedSender<SecretStoreEvent>,
++    pub(crate) store: Option<Arc<dyn super::SecretStore>>,
+     pub(crate) pending: PendingMap,
+     pub(crate) next_request_id: AtomicU64,
+     pub(crate) response_timeout: Duration,
+ }
+
+ #[zbus::interface(name = "org.freedesktop.NetworkManager.SecretAgent")]
++impl SecretAgentInterface {
++    #[zbus(name = "GetSecrets")]
++    async fn get_secrets_dbus(
++        &self,
++        connection: ConnectionDict,
++        connection_path: ObjectPath<'_>,
++        setting_name: &str,
++        hints: Vec<String>,
++        flags: u32,
++        #[zbus(connection)] bus: &zbus::Connection,
++        #[zbus(header)] header: zbus::message::Header<'_>,
++    ) -> Result<ConnectionDict, SecretAgentDBusError> {
++        authorize(bus, &header).await?;
++        self.get_secrets(connection, connection_path, setting_name, hints, flags)
++            .await
++    }
++
++    #[zbus(name = "CancelGetSecrets")]
++    async fn cancel_get_secrets_dbus(
++        &self,
++        connection_path: ObjectPath<'_>,
++        setting_name: &str,
++        #[zbus(connection)] bus: &zbus::Connection,
++        #[zbus(header)] header: zbus::message::Header<'_>,
++    ) -> Result<(), SecretAgentDBusError> {
++        authorize(bus, &header).await?;
++        self.cancel_get_secrets(connection_path, setting_name).await
++    }
++
++    #[zbus(name = "SaveSecrets")]
++    async fn save_secrets_dbus(
++        &self,
++        connection: ConnectionDict,
++        connection_path: ObjectPath<'_>,
++        #[zbus(connection)] bus: &zbus::Connection,
++        #[zbus(header)] header: zbus::message::Header<'_>,
++    ) -> Result<(), SecretAgentDBusError> {
++        authorize(bus, &header).await?;
++        self.save_secrets(connection, connection_path).await
++    }
++
++    #[zbus(name = "DeleteSecrets")]
++    async fn delete_secrets_dbus(
++        &self,
++        connection: ConnectionDict,
++        connection_path: ObjectPath<'_>,
++        #[zbus(connection)] bus: &zbus::Connection,
++        #[zbus(header)] header: zbus::message::Header<'_>,
++    ) -> Result<(), SecretAgentDBusError> {
++        authorize(bus, &header).await?;
++        self.delete_secrets(connection, connection_path).await
++    }
++}
++
++async fn authorize(
++    bus: &zbus::Connection,
++    header: &zbus::message::Header<'_>,
++) -> Result<(), SecretAgentDBusError> {
++    let denied = || SecretAgentDBusError::PermissionDenied("NetworkManager owner required".into());
++    let lookup = async {
++        let proxy = zbus::fdo::DBusProxy::new(bus).await.map_err(|_| denied())?;
++        let name = zbus::names::BusName::try_from("org.freedesktop.NetworkManager")
++            .map_err(|_| denied())?;
++        proxy.get_name_owner(name).await.map_err(|_| denied())
++    };
++    futures::pin_mut!(lookup);
++    let owner =
++        match future::select(lookup, futures_timer::Delay::new(Duration::from_secs(5))).await {
++            Either::Left((result, _)) => result?,
++            Either::Right(_) => return Err(denied()),
++        };
++    if header
++        .sender()
++        .is_some_and(|sender| sender.as_str() == owner.as_str())
++    {
++        Ok(())
++    } else {
++        Err(denied())
++    }
++}
++
+ impl SecretAgentInterface {
+     /// Called by NetworkManager when a connection needs secrets.
+     ///
+@@ -107,6 +191,12 @@ impl SecretAgentInterface {
+             flags: SecretAgentFlags::from_bits_truncate(flags),
+             responder: SecretResponder::new(reply_tx, setting_name.to_owned()),
+             existing_secrets: extract_existing_secrets(&connection, setting_name),
++            vpn_data: connection
++                .get("vpn")
++                .and_then(|vpn| vpn.get("data"))
++                .and_then(|value| value.try_clone().ok())
++                .and_then(|value| HashMap::<String, String>::try_from(value).ok())
++                .unwrap_or_default(),
+         };
+
+         // Cancellation must remain responsive while a bounded request queue is
+@@ -193,10 +283,22 @@ impl SecretAgentInterface {
+     /// Acknowledges a `SaveSecrets` call and forwards it to the store stream.
+     async fn save_secrets(
+         &self,
+-        _connection: ConnectionDict,
++        connection: ConnectionDict,
+         connection_path: ObjectPath<'_>,
+     ) -> Result<(), SecretAgentDBusError> {
+         trace!("SaveSecrets: path={}", connection_path);
++        if let Some(store) = &self.store {
++            let result = store.save(&connection);
++            futures::pin_mut!(result);
++            return match future::select(result, futures_timer::Delay::new(self.response_timeout))
++                .await
++            {
++                Either::Left((Ok(()), _)) => Ok(()),
++                _ => Err(SecretAgentDBusError::Failed(
++                    "Credential storage failed".into(),
++                )),
++            };
++        }
+         let _ = self.store_tx.unbounded_send(SecretStoreEvent::Save {
+             connection_path: connection_path.into(),
+         });
+@@ -206,10 +308,22 @@ impl SecretAgentInterface {
+     /// Acknowledges a `DeleteSecrets` call and forwards it to the store stream.
+     async fn delete_secrets(
+         &self,
+-        _connection: ConnectionDict,
++        connection: ConnectionDict,
+         connection_path: ObjectPath<'_>,
+     ) -> Result<(), SecretAgentDBusError> {
+         trace!("DeleteSecrets: path={}", connection_path);
++        if let Some(store) = &self.store {
++            let result = store.delete(&connection);
++            futures::pin_mut!(result);
++            return match future::select(result, futures_timer::Delay::new(self.response_timeout))
++                .await
++            {
++                Either::Left((Ok(()), _)) => Ok(()),
++                _ => Err(SecretAgentDBusError::Failed(
++                    "Credential deletion failed".into(),
++                )),
++            };
++        }
+         let _ = self.store_tx.unbounded_send(SecretStoreEvent::Delete {
+             connection_path: connection_path.into(),
+         });
+@@ -221,7 +335,7 @@ impl SecretAgentInterface {
+ mod tests {
+     use std::time::Duration;
+
+-    use futures::StreamExt;
++    use futures::{FutureExt, StreamExt};
+     use zvariant::{ObjectPath, OwnedValue, Str};
+
+     use super::*;
+@@ -244,6 +358,7 @@ mod tests {
+                 request_tx,
+                 cancel_tx,
+                 store_tx,
++                store: None,
+                 pending: Arc::new(Mutex::new(HashMap::new())),
+                 next_request_id: AtomicU64::new(1),
+                 response_timeout,
+@@ -651,4 +766,86 @@ mod tests {
+             .await
+             .expect("delete notification is best-effort");
+     }
++
++    struct GatedStore {
++        entered: tokio::sync::Notify,
++        commit: tokio::sync::Mutex<
++            Option<oneshot::Receiver<Result<(), super::super::SecretStoreError>>>,
++        >,
++    }
++
++    #[async_trait::async_trait]
++    impl super::super::SecretStore for GatedStore {
++        async fn save(
++            &self,
++            connection: &ConnectionDict,
++        ) -> Result<(), super::super::SecretStoreError> {
++            assert_eq!(
++                extract_setting_string(connection, "connection", "uuid").as_deref(),
++                Some("test-uuid")
++            );
++            let receiver = self.commit.lock().await.take().expect("one store request");
++            self.entered.notify_one();
++            receiver.await.expect("controlled commit outcome")
++        }
++
++        async fn delete(
++            &self,
++            _connection: &ConnectionDict,
++        ) -> Result<(), super::super::SecretStoreError> {
++            Err(super::super::SecretStoreError)
++        }
++    }
++
++    #[tokio::test]
++    async fn configured_store_is_awaited_and_failures_are_not_acknowledged() {
++        for success in [true, false] {
++            let mut harness = harness(Duration::from_secs(5));
++            let (commit, receiver) = oneshot::channel();
++            let store = Arc::new(GatedStore {
++                entered: tokio::sync::Notify::new(),
++                commit: tokio::sync::Mutex::new(Some(receiver)),
++            });
++            harness.iface.store = Some(store.clone());
++            let operation =
++                tokio::spawn(async move { harness.iface.save_secrets(connection(), path()).await });
++            tokio::time::timeout(Duration::from_secs(2), store.entered.notified())
++                .await
++                .expect("store entered");
++            assert!(
++                !operation.is_finished(),
++                "NM must not receive success before durable commit"
++            );
++            commit
++                .send(if success {
++                    Ok(())
++                } else {
++                    Err(super::super::SecretStoreError)
++                })
++                .expect("pending operation");
++            let outcome = operation.await.expect("joined store operation");
++            assert_eq!(outcome.is_ok(), success);
++            if let Err(error) = outcome {
++                assert!(matches!(error, SecretAgentDBusError::Failed(_)));
++            }
++            assert!(
++                harness
++                    .store_events
++                    .next()
++                    .now_or_never()
++                    .flatten()
++                    .is_none()
++            );
++        }
++        let mut harness = harness(Duration::from_secs(5));
++        let (_commit, receiver) = oneshot::channel();
++        harness.iface.store = Some(Arc::new(GatedStore {
++            entered: tokio::sync::Notify::new(),
++            commit: tokio::sync::Mutex::new(Some(receiver)),
++        }));
++        assert!(matches!(
++            harness.iface.delete_secrets(connection(), path()).await,
++            Err(SecretAgentDBusError::Failed(_))
++        ));
++    }
+ }
+diff --git a/nmrs/src/agent/mod.rs b/nmrs/src/agent/mod.rs
+index 3fc488a..e59473f 100644
+--- a/nmrs/src/agent/mod.rs
++++ b/nmrs/src/agent/mod.rs
+@@ -29,7 +29,10 @@
+ //!    [`SecretStoreEvent`](crate::agent::SecretStoreEvent) items when
+ //!    NetworkManager asks the agent to save or delete persisted secrets.
+ //!    Since `nmrs` delegates persistence to the consumer, these events are
+-//!    optional and the agent always acknowledges them.
++//!    optional and the agent acknowledges them when no durable store is configured.
++//!    A desktop using [`SecretAgentBuilder::with_store`] instead receives the
++//!    original NM dictionary through [`SecretStore`]; the D-Bus operation awaits
++//!    its result before reporting success. Errors/deadlines are not acknowledgments.
+ //!
+ //! # Lifecycle
+ //!
+@@ -137,6 +140,9 @@
+ mod builder;
+ pub(crate) mod iface;
+ mod request;
++mod storage;
++
++pub use storage::{SecretConnection, SecretStore, SecretStoreError};
+
+ pub use builder::{SecretAgent, SecretAgentBuilder, SecretAgentHandle};
+ pub use request::{
+diff --git a/nmrs/src/agent/request.rs b/nmrs/src/agent/request.rs
+index ff89c3e..f8607a9 100644
+--- a/nmrs/src/agent/request.rs
++++ b/nmrs/src/agent/request.rs
+@@ -131,6 +131,10 @@ pub struct SecretRequest {
+     /// pre-filling a re-authentication prompt. Currently only populated for
+     /// `vpn` connections, and only for system-owned secrets.
+     pub existing_secrets: HashMap<String, String>,
++    /// VPN metadata, including per-secret `*-flags`. Not included in Debug.
++    /// Consumers must not retrieve/persist not-saved secrets or assume a missing
++    /// flag means agent-owned. This is empty for non-VPN requests.
++    pub vpn_data: HashMap<String, String>,
+ }
+
+ impl std::fmt::Debug for SecretRequest {
+diff --git a/nmrs/src/agent/storage.rs b/nmrs/src/agent/storage.rs
+new file mode 100644
+index 0000000..6f4333c
+--- /dev/null
++++ b/nmrs/src/agent/storage.rs
+@@ -0,0 +1,30 @@
++//! Optional consumer-owned durable storage, invoked before acknowledging NM.
++use std::collections::HashMap;
++
++/// NM's settings dictionary. Contains credentials; never log or persist wholesale.
++pub type SecretConnection = HashMap<String, HashMap<String, zvariant::OwnedValue>>;
++
++/// A redacted failure to commit a credential-store operation.
++#[derive(Debug, Default, thiserror::Error)]
++#[error("credential store operation failed")]
++#[non_exhaustive]
++pub struct SecretStoreError;
++
++/// Persistence supplied by the desktop agent, not by nmrs.
++///
++/// Calls are authenticated against the current NM bus owner and bounded by the
++/// agent response deadline. Implementations must honor per-secret NM flags and
++/// never fall back to a different store. Save receives the original NM payload;
++/// Delete receives connection identity even after the NM object disappears.
++/// A successful return must mean the operation completed, not merely queued.
++/// On deadline/cancellation the future is dropped; an already dispatched store
++/// write may have completed, so consumers must make replacements idempotent.
++#[async_trait::async_trait]
++pub trait SecretStore: Send + Sync {
++    /// Persist only agent-owned secrets from this payload.
++    #[must_use = "the credential store operation must be awaited"]
++    async fn save(&self, connection: &SecretConnection) -> Result<(), SecretStoreError>;
++    /// Delete this connection's agent-owned secrets, without consulting its path.
++    #[must_use = "the credential deletion must be awaited"]
++    async fn delete(&self, connection: &SecretConnection) -> Result<(), SecretStoreError>;
++}

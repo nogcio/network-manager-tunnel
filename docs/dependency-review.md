@@ -15,6 +15,13 @@ inventory or a legal certification.
 
 ## Maintenance and native cost
 
+The VM-only standard NM agent fixture directly uses the already resolved crates.io
+Tokio 1.54.1 `signal` feature as an nm-client dev dependency, to unregister cleanly
+on owned SIGTERM. Tokio is MIT and actively maintained; Cargo.lock records its
+registry checksum and existing signal-hook-registry 1.4.8 resolution. This exposes
+no production API, new crate version or linked native library. Signal delivery
+remains process-local and the VM runner externally bounds fixture teardown.
+
 Source DoH directly consumes the already locked crates.io `hyper =1.12.0`
 (`client`, `http1`, defaults off), `hyper-util =0.1.21` (`tokio`, defaults off),
 `http-body-util =0.1.5` and `bytes =1.12.1` (defaults off). These MIT libraries
@@ -161,8 +168,8 @@ The existing hickory-proto 0.26.3 (`std`, MIT OR Apache-2.0) parses DNS. This ma
 Tokio utility stack is a real resolver-relay consumer, not a new daemon/protocol
 implementation. `codec` adds an edge to the already locked libc 0.2.191; no new
 package or native library is resolved. Standard audits still
-apply. Destination TLS readiness reuses pinned meow transport with certificate
-verification explicitly enabled, without a new dependency or implicit dialer.
+apply. Endpoint-only readiness reuses the pinned application transport chain with
+TLS/REALITY verification, without a new dependency, destination or implicit dialer.
 
 Connected-LAN route planning directly consumes crates.io ipnet 2.12.2 (`std`,
 default features disabled), MIT OR Apache-2.0, already locked transitively. Its real

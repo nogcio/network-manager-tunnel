@@ -1,6 +1,7 @@
 # ADR 0012: Explicit connected RFC1918 LAN bypass
 
-Status: experimental implementation; native/VM route and packet acceptance pending.
+Status: experimental implementation with bounded offline NM/VM route and packet
+scenarios; broader topology and production acceptance remain incomplete.
 Date: 2026-10-26.
 
 This ADR describes standalone LAN bypass. Combining it with DNS interception uses
@@ -45,7 +46,9 @@ connected routes handle LAN; all other destinations, including internal DNS/Fake
 space, are covered by VPN routes. No `ip route`, netlink route writer or competing
 route manager is introduced. The guard prevents an unrelated more-specific physical
 route from turning this into public bypass; an unusable route fails rather than
-opening an unmarked physical fallback. Legacy profiles keep normal default routing.
+opening an unmarked physical fallback. Ordinary full-tunnel profiles also report
+`never-default=true` and explicit two-/1 coverage, so even a lower-metric physical
+default cannot steal VPN traffic. Complement summarization never emits a /0.
 Generic user-supplied NM routes/never-default overrides remain rejected.
 
 ## Dependencies and references
@@ -66,8 +69,9 @@ mutation. Schema/client/UI tests check explicit v2 storage, unknown-scope reject
 metadata observation, default-off and source-preserving creation-only controls.
 Ordinary checks do not run nft, activate NM or change host routes/DNS.
 
-Live NM application, DNS with never-default, route removal, packet capture for
-public/IPv6 fail-closed behavior and uplink loss still require authorized disposable
-VM acceptance. Building and unit tests alone do not establish a working LAN bypass.
+The [offline VM suite](../testing/vm-acceptance.md) exercises NM route application,
+connected versus routed private TCP/UDP, DNS, packet isolation and cleanup in its
+declared synthetic topology. Broader routing topologies and production acceptance
+remain incomplete. Building and unit tests alone do not establish a working LAN bypass.
 FakeIP, full private-IP subscription matching and ordered full-policy translation
 remain separate work; this component is not authorization for partial installation.

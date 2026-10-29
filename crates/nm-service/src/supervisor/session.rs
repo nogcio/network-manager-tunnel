@@ -20,6 +20,7 @@ pub(crate) struct Prepared {
     pub dns: Ipv4Addr,
     pub lan: crate::lan::Plan,
     pub source_policy: Option<Box<nm_tunnel_profile::SourcePolicy>>,
+    pub(super) uplink: Observation,
 }
 
 impl Session {
@@ -36,11 +37,20 @@ impl Session {
     }
 }
 
-async fn uplink(
+#[derive(Clone, PartialEq, Eq)]
+pub(super) struct Observation {
+    primary: OwnedObjectPath,
+    pub(super) interface: String,
+    dns: Ipv4Addr,
+    addresses: Vec<(Ipv4Addr, u8)>,
+    gateway: String,
+}
+
+pub(super) async fn uplink(
     bus: &zbus::Connection,
     bypass: bool,
     source: bool,
-) -> io::Result<super::plan::Uplink> {
+) -> io::Result<(super::plan::Uplink, Observation)> {
     let nm = zbus::Proxy::new(
         bus,
         "org.freedesktop.NetworkManager",
@@ -56,6 +66,7 @@ async fn uplink(
     if active.as_str() == "/" {
         return Err(failure());
     }
+    let primary = active.clone();
     let active = zbus::Proxy::new(
         bus,
         "org.freedesktop.NetworkManager",
@@ -107,7 +118,7 @@ async fn uplink(
         .filter_map(|v| v.parse::<Ipv4Addr>().ok())
         .find(|v| crate::dns::valid_uplink_server(*v))
         .ok_or_else(failure)?;
-    let addresses = if bypass {
+    let mut addresses = {
         let device_ip4: OwnedObjectPath = device
             .get_property("Ip4Config")
             .await
@@ -169,14 +180,28 @@ async fn uplink(
             }
         }
         addresses
-    } else {
-        Vec::new()
     };
-    Ok(super::plan::Uplink {
-        interface,
+    addresses.sort_unstable();
+    addresses.dedup();
+    let gateway: String = config
+        .get_property("Gateway")
+        .await
+        .map_err(|_| failure())?;
+    let observation = Observation {
+        primary,
+        interface: interface.clone(),
         dns,
-        addresses,
-    })
+        addresses: addresses.clone(),
+        gateway,
+    };
+    Ok((
+        super::plan::Uplink {
+            interface,
+            dns,
+            addresses: if bypass { addresses } else { Vec::new() },
+        },
+        observation,
+    ))
 }
 
 fn failure() -> io::Error {
@@ -198,7 +223,7 @@ pub(crate) async fn prepare(
         nm_tunnel_profile::RoutingPolicy::Complete(_)
     );
     let bypass = profile.lan_bypass() == nm_tunnel_profile::LanBypass::Connected || source;
-    let uplink = timeout(Duration::from_secs(5), uplink(&bus, bypass, source))
+    let (uplink, observation) = timeout(Duration::from_secs(5), uplink(&bus, bypass, source))
         .await
         .map_err(|_| failure())??;
     let super::plan::Plan {
@@ -211,7 +236,9 @@ pub(crate) async fn prepare(
     // Reserve the public name with a newly created, disabled device before any
     // firewall mutation. A collision must not temporarily authorize another TUN.
     telemetry.stage("tun");
-    resources.device = Some(super::tun::create()?);
+    if resources.device.is_none() {
+        resources.device = Some(super::tun::create()?);
+    }
     eprintln!("Activation stage: TUN created.");
     let fake_ip = profile.network().fake_ip();
     let intercept = profile.network().intercepts_dns();
@@ -335,5 +362,6 @@ pub(crate) async fn prepare(
         dns: advertised_dns,
         lan,
         source_policy: session_policy,
+        uplink: observation,
     })
 }

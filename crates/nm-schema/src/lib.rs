@@ -7,5 +7,7 @@ mod policy;
 
 pub use decode::{Configuration, Settings, Strings, data, decode, decode_configuration, ip_policy};
 pub use edit::ProfileChanges;
-pub use encode::{EncodedProfile, encode_profile};
+pub use encode::{
+    CredentialStorage, EncodedProfile, ProfileOptions, encode_profile, encode_profile_with_options,
+};
 pub use policy::{LanBypass, decode_policy};

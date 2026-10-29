@@ -33,10 +33,11 @@ the current source UI; an older installed package may have different controls.
    Source URLs and associations are restored from the desktop keyring after restart.
    Locked storage needs **Restore subscriptions** and desktop authorization.
    Unavailable/unconfirmed storage is visibly session-only, never plaintext.
-   **Save profile** always saves the profile
-   and credentials on disk in NM system storage so they survive restart. The import
-   page explains this before adding. This is not a desktop keyring or encrypted
-   credential vault; NM controls file access and authorization. The subscription
+   **Save profile** saves profile settings on disk through NM and delegates
+   credentials to the desktop's registered NM secret agent. The import page explains
+   this before adding. Agent/keyring availability and prompts belong to the desktop;
+   missing storage never selects a silent system-secret fallback. Existing profiles
+   retain their storage mode. The subscription
    URL is saved separately through Secret Service, never in NM profile data.
    **DNS and LAN for the next added profile** selects source/default, current-network plain
    IPv4 DNS outside VPN, or one public IPv4 resolver through VPN. CurrentNetwork
@@ -101,6 +102,13 @@ chart. Stale/missing rates display `—`, not zero. Backend statistics describe 
 last observed attempt, not a selected profile: profile information actions show NM
 metadata separately. TUN counters are not provider billing or proof of protection.
 
+Connected means the configured server's secure transport and local data plane are
+ready, not that every destination or DNS server is reachable. VLESS credentials may
+be rejected when actual traffic starts, even after connection succeeds. Tunnel does
+not contact a third-party control website or issue DNS test queries on connection
+or during endpoint health checks. Configured endpoint hostname bootstrap, explicit
+subscription requests and actual application/DNS traffic still use the network.
+
 Press **Disconnect** for the single observed connection. NM performs teardown;
 the backend closes its worker/TUN and removes its guard on clean disconnection.
 The GUI observes NM state, not private firewall state, so it does not certify
@@ -108,7 +116,24 @@ completed cleanup from a method reply. To switch nodes, disconnect explicitly,
 then use another saved profile's Connect action. There is no automatic switching,
 startup activation, subscription refresh or reconnection loop in the GUI.
 
-Manual protocol editing and secret-agent ownership are not implemented.
+Manual protocol editing and a competing Tunnel secret agent are not implemented.
+New COSMIC saves use the desktop's standard NM secret agent for credentials. An
+available registered agent is required for keyring/prompt handling; there is no
+silent system-storage fallback. Existing profiles keep their storage mode.
+The real COSMIC applet 1:1.10.0-1 currently fails the isolated keyring-persistence
+check: an unlocked keyring receives no item after Agent-owned profile save.
+Do not rely on new Agent saves retaining credentials across sessions on this
+desktop; registration and the synthetic agent test are not persistence acceptance.
+A local COSMIC/nmrs patch candidate passes isolated save/reopen/delete checks;
+it does not fix an installed, unpatched desktop automatically. See the
+[candidate contract](../patches/cosmic-nm-agent/README.md) before considering deployment.
+New profiles also use NM's persistent session lifetime: physical network loss
+closes old flows and rebuilds endpoint/DNS/LAN authority while keeping protection.
+Waiting has no overall network-loss timeout; explicit Disconnect cancels it and
+permits ordinary networking without VPN. This is not a permanent boot guard or
+protection against catastrophic backend shutdown. NM may still report Activated
+while backend diagnostics report connecting. See
+[ADR 0033](decisions/0033-persistent-network-lifetime-and-nm-agents.md).
 Settings provides narrow network editing and confirmed deletion through NM.
 Removing a subscription does not delete the profiles already saved in NM.
 Old session-only profiles are not migrated automatically; re-add them explicitly
@@ -157,8 +182,9 @@ rename sources, schedule updates or disconnect an expired subscription. They are
 not restored between app sessions. Relative expiry depends on the local clock.
 
 Mapped updates keep NM names, UUIDs, permissions, IP settings and compatible network
-overrides; required source conflicts reject. Source credentials replace old ones in
-NM system storage, not a desktop keyring. No VPN restart occurs. Multiple profile
+overrides; required source conflicts reject. Source credentials replace old ones
+through NM using the retained credential-storage mode and persistent lifetime.
+No VPN restart occurs. Multiple profile
 writes are not atomic: a later error reports confirmed earlier changes without
 claiming rollback or retrying them. Unknown writes block further profile mutations.
 

@@ -37,6 +37,28 @@ will be added when the [roadmap](roadmap.md) supplies actual consumers and autho
 
 ## Dependencies and distribution
 
+The [QEMU ICH9 S3 patch candidate](../patches/qemu-ich9-s3/README.md) is based on
+QEMU `v11.1.2`, commit `4fc49f46dc95d4a27de2509e7fceb2931e91faeb`. It preserves
+LPC/PM state on S3 wakeup and adds an upstream-owned TCO regression; it is an
+optional local VM test-tool correction, not a production dependency or host
+installation. Original QEMU license texts and per-file notices are retained beside
+the patch. QEMU's GPL-2.0 distribution and the touched files' permissive/LGPL/GPL
+notices are not replaced by this workspace's license. No QEMU binary or firmware
+is included, and no upstream submission or release is authorized by local testing.
+
+The owner-authorized [COSMIC/nmrs patch candidate](../patches/cosmic-nm-agent/README.md)
+contains upstream patch context, not copied Tunnel runtime implementations.
+COSMIC applets base `406d1b7d627138fdf4078f654268d3d8774e50f1` is from
+<https://github.com/pop-os/cosmic-applets> under GPL-3.0-or-later; nmrs base
+`ae2166e0658aadde16b133afa20f7285c5ef2d9d` is from
+<https://github.com/freedesktop-rs/nmrs> under MIT OR Apache-2.0.
+Their original license texts, including nmrs's Copyright (c) 2025 akrm al-hakimi,
+are retained beside the patches. These license scopes are not replaced by the
+workspace license. The modifications add NM-owner authentication and desktop-owned
+VPN Secret Service persistence. Neither external crate becomes a new Tunnel
+dependency. Local source/VM acceptance is not upstream approval, publication,
+host installation or authorization to distribute patched desktop binaries.
+
 The COSMIC application-template localization API pattern was consulted at commit
 `97ff759e658922d7f02e708b10cfda421352b100`:
 <https://github.com/pop-os/cosmic-app-template/tree/97ff759e658922d7f02e708b10cfda421352b100>.

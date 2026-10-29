@@ -88,7 +88,7 @@ The existing checked hostname policy also applies to FakeIP-owned UDP names in t
 explicit mode. New UDP Direct grants require root's FakeIP flag, its own Direct
 policy and independent DNS/IP verification; legacy TCP-only policies cannot grant
 UDP. Root retains each direct UDP IP socket behind the bounded payload relay.
-Readiness requires both the existing real upstream probe and durable FakeIP/reverse
+Readiness requires configured-peer secure transport and durable local FakeIP/reverse
 identity round trip; a synthetic DNS answer alone cannot certify a working proxy.
 
 ## Reserved-range guard and boot gate

@@ -28,14 +28,20 @@ through existing protocol libraries.
   arbitrary rule sets/general source shapes remain unsupported, not ignored.
   Root source-DNS protocol execution still needs production security review;
   an authorized experimental package installation does not complete that review.
-- Validate [DNS overrides](decisions/0011-profile-dns-overrides.md) with real NM/DHCP,
-  packet-level isolation, verified readiness and teardown in an authorized disposable
-  VM. Validate [checked saved-profile replacement](decisions/0018-checked-profile-replacement.md)
-  beyond the passed inactive NM 1.58.1 VM save/edit/stale-version/source-update/delete
-  checks, especially active-session isolation, concurrent deletion and desktop Polkit.
-  Source-policy selected-resolver Direct authorization needs native validation.
-- Validate [connected RFC1918 bypass](decisions/0012-connected-lan-bypass.md) with
-  NM route installation/removal, DNS, public/IPv6 isolation and uplink loss. This
+- Extend [DNS override](decisions/0011-profile-dns-overrides.md) acceptance beyond
+  the offline NM manual/current-network forwarding and packet-isolation scenarios
+  to physical-network DHCP environments and positive trusted encrypted resolvers.
+  The isolated dnsmasq lease-change scenario now verifies address/router/resolver
+  renewal with retained VPN/TUN/FakeIP ownership. Readiness follows the
+  [endpoint-only contract](decisions/0032-destination-free-readiness.md), not an
+  Internet-access test. Extend
+  [saved-profile replacement](decisions/0018-checked-profile-replacement.md)
+  beyond offline save/edit/stale-version/source-update/delete and active-session
+  isolation checks to concurrent deletion and desktop Polkit.
+  Source-policy selected-resolver Direct authorization has bounded offline native
+  fixtures; broader resolver and policy combinations remain unaccepted.
+- Extend [connected RFC1918 bypass](decisions/0012-connected-lan-bypass.md) beyond
+  the offline connected/routed-LAN, DNS and physical-isolation fixtures. This
   explicit narrow mode does not satisfy full subscription private-IP matching.
 - Validate [combined LAN/DNS relays](decisions/0014-intercepted-lan-relays.md) for NM
   route precedence, strict physical blocking and netstack attribution. Broader
@@ -43,7 +49,7 @@ through existing protocol libraries.
   [endpoint/Direct relay](decisions/0015-root-owned-endpoint-relays.md) interoperability,
   TUN forwarding isolation and tunneled TCP/UDP DNS. FakeIP needs durable identity;
   default library cache eviction/best-effort persistence is insufficient.
-- Resolve live REALITY compatibility. Isolated fork/engine probes
+- Broaden REALITY compatibility evidence. Isolated fork/engine probes
   established synthetic payload and Vision DIRECT behavior, not every provider's
   fingerprint or extension compatibility. See [REALITY research](research/reality-feasibility.md).
 - Exercise longer-running TCP/UDP, half-close, bounded buffering, cancellation and
@@ -65,8 +71,16 @@ through existing protocol libraries.
   route alone is not a kill switch.
 
 The [service contract](../crates/nm-service/README.md) owns runtime limits and VM
-acceptance requirements. Disposable scripts/logs under `target/native-acceptance/vm/`
-provided the bounded evidence in ADR 0026, not a maintained portable VM test suite.
+acceptance requirements. The maintained [offline VM suite](testing/vm-acceptance.md)
+owns baseline NM/TUN/packet/failure/update scenarios with isolated synthetic peers.
+Earlier scripts/logs under `target/native-acceptance/vm/` provided the bounded
+historical evidence in ADR 0026; the maintained suite does not imply all broader
+source-policy, roaming, suspend or desktop acceptance categories are complete.
+The expanded 40-case offline composition passes with explicit local QEMU and
+COSMIC/nmrs patches, including DHCP, real guest S3, keyring lifecycle and
+ten-minute post-resume traffic. Installed QEMU/COSMIC still reproduce their
+documented failures; physical-machine sleep/Wi-Fi, positive trusted encrypted
+transports, reboot/coexistence, multi-hour load and full native UX remain open.
 Local Arch build/package/update success is limited host evidence,
 not a replacement for these acceptance categories. Ordinary repository checks
 never mutate host networking.
@@ -76,8 +90,13 @@ never mutate host networking.
 COSMIC is the first frontend. Keep its subscription-first workflow and NM as the
 only profile/activation owner. Saved network-setting edits and reviewed replacement
 exist, but full native acceptance, a manual protocol editor, automatic schema
-migration and desktop secret-agent
-integration remain work rather than prerequisites for source release.
+migration remain work rather than prerequisites for source release. Standard NM
+secret-agent integration and persistent network recovery exist under
+[ADR 0033](decisions/0033-persistent-network-lifetime-and-nm-agents.md); real desktop
+agent/keyring acceptance remains incomplete. A local
+[COSMIC/nmrs patch pair](../patches/cosmic-nm-agent/README.md) passes unlocked
+save/reopen/delete and standard flag/caller boundaries in a private guest desktop,
+but requires independent review and deployment work; it is not an installed fix.
 
 - Verify native input, accessibility, error feedback and desktop Polkit prompts on
   the supported COSMIC version. UI state tests and screenshots are insufficient.

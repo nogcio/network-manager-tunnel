@@ -77,13 +77,14 @@ need review on updates and before supported release. Passing these tests cannot
 establish NM activation,
 leak prevention, fail-closed routing, DNS policy or native desktop acceptance.
 
-`verify_tls_peer` performs a mandatory certificate-verified destination TLS handshake
-over an owned VLESS tunnel using the pinned transport library. It creates no socket
-or resolver, sends no HTTP request, and closes on completion/error/cancellation or
-its ten-second deadline. The worker consumes it for CurrentNetwork DNS readiness:
-direct DNS success alone cannot certify a working proxy. This proves one TCP/TLS
-exchange, not UDP, host routing or leak prevention. See
-[ADR 0011](../../docs/decisions/0011-profile-dns-overrides.md).
+`verify_peer_transport` checks the host-approved endpoint and applies the same
+TLS/REALITY/WebSocket transport chain as application flows, then closes it. It
+creates no socket, resolver query, VLESS destination or application health request.
+Rejection, cancellation and its ten-second deadline release the owned input.
+The NM worker consumes it for endpoint-only readiness/health. Success verifies the
+secure peer, not VLESS UUID acceptance, DNS, forwarding or Internet reachability;
+VLESS/Vision may defer authentication until real application I/O. See
+[ADR 0032](../../docs/decisions/0032-destination-free-readiness.md).
 
 ## TCP hostname inspection
 

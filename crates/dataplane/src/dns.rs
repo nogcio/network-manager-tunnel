@@ -12,8 +12,8 @@ use std::{io, net::Ipv4Addr};
 pub const LEGACY_VPN_DNS: Ipv4Addr = Ipv4Addr::new(1, 1, 1, 1);
 /// Virtual resolver for current-network forwarding.
 pub const INTERNAL_DNS: Ipv4Addr = Ipv4Addr::new(198, 18, 0, 2);
-/// Synthetic readiness query name.
-pub const PROBE_HOST: &str = "example.com";
+/// Reserved local FakeIP ownership check. Never query an upstream resolver for it.
+pub const PROBE_HOST: &str = "readiness.nm-tunnel.invalid";
 /// Maximum accepted DNS message, independently of its transport.
 pub const MAX_DNS_BYTES: usize = 4096;
 
@@ -88,7 +88,8 @@ pub fn profile_dns(mode: nm_tunnel_profile::DnsOverride) -> Ipv4Addr {
     }
 }
 
-/// Build the readiness query, with a fresh ID or a redacted encoding error.
+/// Build the local FakeIP check, with a fresh ID or a redacted encoding error.
+/// This name has no external readiness or Internet reachability meaning.
 pub fn dns_query() -> io::Result<(u16, Vec<u8>)> {
     query(PROBE_HOST)
 }

@@ -27,14 +27,33 @@ impl Resources {
     /// independent process-pinned recovery owns that case. Cancellation retains
     /// ownership in `self`; dropping is not a shutdown barrier.
     pub async fn stop(&mut self) -> io::Result<()> {
+        self.stop_flows(false).await
+    }
+
+    /// Revoke and join every old flow without dropping NM's existing packet
+    /// device. Only the lifecycle's admitted persistent session may call this.
+    pub(super) async fn suspend(&mut self) -> io::Result<()> {
+        self.stop_flows(true).await
+    }
+
+    async fn stop_flows(&mut self, retain_device: bool) -> io::Result<()> {
         let worker = match &mut self.child {
             Some(child) => crate::task::terminate(child).await,
             None => Ok(()),
         };
-        self.finish_stop(worker).await
+        self.finish_stop_mode(worker, retain_device).await
     }
 
+    #[cfg(test)]
     async fn finish_stop(&mut self, worker: io::Result<()>) -> io::Result<()> {
+        self.finish_stop_mode(worker, false).await
+    }
+
+    async fn finish_stop_mode(
+        &mut self,
+        worker: io::Result<()>,
+        retain_device: bool,
+    ) -> io::Result<()> {
         let guard = match &mut self.guard_writer {
             Some(child) => crate::task::terminate(child).await,
             None => Ok(()),
@@ -52,7 +71,9 @@ impl Resources {
         guard?;
         self.child = None;
         self.guard_writer = None;
-        self.device = None;
+        if !retain_device {
+            self.device = None;
+        }
         Ok(())
     }
 }

@@ -11,6 +11,10 @@ the protocol engine or the profile model.
   It generates an independent connection UUID, disables autoconnect and keeps the
   credential exclusively in `vpn.secrets`. Its returned values contain secrets;
   Debug is redacted, but serialization is not a zeroization guarantee.
+- `encode_profile_with_options` additionally accepts explicit NM credential flags
+  (system, agent-owned or not-saved) and the NM persistent-session option. Legacy
+  defaults do not change. These are local user choices, not provider-controlled
+  routing fields; no migration, autoconnect or application keyring is introduced.
 - `decode_configuration` checks public settings without looking up or inventing
   credentials. The returned `Configuration` is not a `Profile`; its empty credential
   cannot pass executable validation. NM NeedSecrets uses this path.

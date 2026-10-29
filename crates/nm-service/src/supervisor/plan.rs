@@ -4,6 +4,7 @@ use nm_tunnel_profile::{LanBypass, Profile, RoutingPolicy};
 use std::{io, net::Ipv4Addr};
 
 /// Bounded observation supplied by the NM adapter, never by a worker request.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Uplink {
     pub interface: String,
     pub dns: Ipv4Addr,

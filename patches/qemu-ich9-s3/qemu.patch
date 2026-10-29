@@ -1,0 +1,152 @@
+diff --git a/hw/acpi/ich9.c b/hw/acpi/ich9.c
+index 5e8f8a7..ada97a0 100644
+--- a/hw/acpi/ich9.c
++++ b/hw/acpi/ich9.c
+@@ -248,9 +248,8 @@ const VMStateDescription vmstate_ich9_pm = {
+     }
+ };
+ 
+-static void pm_reset(void *opaque)
++void ich9_pm_reset(ICH9LPCPMRegs *pm)
+ {
+-    ICH9LPCPMRegs *pm = opaque;
+     ich9_pm_iospace_update(pm, 0);
+ 
+     acpi_pm1_evt_reset(&pm->acpi_regs);
+@@ -327,7 +326,6 @@ void ich9_pm_init(PCIDevice *lpc_pci, ICH9LPCPMRegs *pm, qemu_irq sci_irq)
+     }
+ 
+     pm->irq = sci_irq;
+-    qemu_register_reset(pm_reset, pm);
+     pm->powerdown_notifier.notify = pm_powerdown_req;
+     qemu_register_powerdown_notifier(&pm->powerdown_notifier);
+ 
+diff --git a/hw/isa/lpc_ich9.c b/hw/isa/lpc_ich9.c
+index edf9783..892458e 100644
+--- a/hw/isa/lpc_ich9.c
++++ b/hw/isa/lpc_ich9.c
+@@ -588,13 +588,24 @@ static void ich9_lpc_config_write(PCIDevice *d,
+     }
+ }
+ 
+-static void ich9_lpc_reset(DeviceState *qdev)
++static void ich9_lpc_reset_hold(Object *obj, ResetType type)
+ {
+-    PCIDevice *d = PCI_DEVICE(qdev);
++    PCIDevice *d = PCI_DEVICE(obj);
+     ICH9LPCState *lpc = ICH9_LPC_DEVICE(d);
+     uint32_t rcba_old = pci_get_long(d->config + ICH9_LPC_RCBA);
+     int i;
+ 
++    /*
++     * The guest retains its chipset configuration over S3. Cold-resetting LPC
++     * or its PM block here removes the ACPI/TCO I/O decode while the TCO timer
++     * is still running, so OS keepalives no longer reach the watchdog.
++     */
++    if (type == RESET_TYPE_WAKEUP) {
++        return;
++    }
++
++    ich9_pm_reset(&lpc->pm);
++
+     for (i = 0; i < 4; i++) {
+         pci_set_byte(d->config + ICH9_LPC_PIRQA_ROUT + i,
+                      ICH9_LPC_PIRQ_ROUT_DEFAULT);
+@@ -889,7 +900,7 @@ static void ich9_lpc_class_init(ObjectClass *klass, const void *data)
+     AcpiDevAmlIfClass *amldevc = ACPI_DEV_AML_IF_CLASS(klass);
+ 
+     set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
+-    device_class_set_legacy_reset(dc, ich9_lpc_reset);
++    RESETTABLE_CLASS(klass)->phases.hold = ich9_lpc_reset_hold;
+     k->realize = ich9_lpc_realize;
+     dc->vmsd = &vmstate_ich9_lpc;
+     device_class_set_props(dc, ich9_lpc_properties);
+diff --git a/include/hw/acpi/ich9.h b/include/hw/acpi/ich9.h
+index 30990fc..703e2a3 100644
+--- a/include/hw/acpi/ich9.h
++++ b/include/hw/acpi/ich9.h
+@@ -77,6 +77,8 @@ typedef struct ICH9LPCPMRegs {
+ #define ACPI_PM_PROP_TCO_ENABLED "enable_tco"
+ 
+ void ich9_pm_init(PCIDevice *lpc_pci, ICH9LPCPMRegs *pm, qemu_irq sci_irq);
++/* Called by the owning LPC device for cold reset, not S3 wakeup. */
++void ich9_pm_reset(ICH9LPCPMRegs *pm);
+ 
+ void ich9_pm_iospace_update(ICH9LPCPMRegs *pm, uint32_t pm_io_base);
+ extern const VMStateDescription vmstate_ich9_pm;
+diff --git a/tests/qtest/tco-test.c b/tests/qtest/tco-test.c
+index 20ccefa..1517d83 100644
+--- a/tests/qtest/tco-test.c
++++ b/tests/qtest/tco-test.c
+@@ -247,6 +247,63 @@ static QDict *get_watchdog_action(const TestData *td)
+     return data;
+ }
+ 
++/* S3 must not remove the I/O decode used by the OS's keepalive writes. */
++static void test_tco_s3_keepalive_and_expiry(void)
++{
++    TestData td;
++    const uint16_t ticks = TCO_SECS_TO_TICKS(16);
++    QDict *action;
++    int i;
++
++    td.args = "-watchdog-action pause -nic none";
++    td.noreboot = false;
++    test_init(&td);
++    stop_tco(&td);
++    clear_tco_status(&td);
++    reset_on_second_timeout(&td, true);
++    set_tco_timeout(&td, ticks);
++    start_tco(&td);
++
++    qtest_outw(td.qts, PM_IO_BASE_ADDR + ICH9_PMIO_PM1_CNT,
++               ACPI_BITMASK_SLEEP_ENABLE | (1 << 10));
++    qtest_qmp_eventwait(td.qts, "SUSPEND");
++    qtest_qmp_assert_success(td.qts, "{ 'execute': 'system_wakeup' }");
++    qtest_qmp_eventwait(td.qts, "WAKEUP");
++
++    g_assert_cmphex(qpci_config_readl(td.dev, ICH9_LPC_PMBASE), ==,
++                    PM_IO_BASE_ADDR | 1);
++    g_assert_cmphex(qpci_config_readb(td.dev, ICH9_LPC_ACPI_CTRL), ==, 0x80);
++    g_assert_cmphex(qpci_config_readl(td.dev, ICH9_LPC_RCBA), ==,
++                    RCBA_BASE_ADDR | 1);
++    g_assert_cmpint(qpci_io_readw(td.dev, td.tco_io_bar, TCO_TMR), ==, ticks);
++    g_assert_cmpint(qtest_readl(td.qts, RCBA_BASE_ADDR + ICH9_CC_GCS) &
++                   ICH9_CC_GCS_NO_REBOOT, ==, 0);
++
++    /* Service the same watchdog beyond its two-period expiry window. */
++    for (i = 0; i < 6; i++) {
++        qtest_clock_step(td.qts, ticks * TCO_TICK_NSEC / 2);
++        load_tco(&td);
++    }
++    g_assert_cmpint(qpci_io_readw(td.dev, td.tco_io_bar, TCO1_STS) &
++                   TCO_TIMEOUT, ==, 0);
++
++    /* It must still fire when keepalives cease; this is not a disable fix. */
++    qtest_clock_step(td.qts, ticks * TCO_TICK_NSEC * 2);
++    action = get_watchdog_action(&td);
++    g_assert_cmpstr(qdict_get_str(action, "action"), ==, "pause");
++    qobject_unref(action);
++    stop_tco(&td);
++    qtest_qmp_assert_success(td.qts, "{ 'execute': 'system_reset' }");
++    qtest_qmp_eventwait(td.qts, "RESET");
++    g_assert_cmphex(qpci_config_readl(td.dev, ICH9_LPC_PMBASE), ==,
++                    ICH9_LPC_PMBASE_DEFAULT);
++    g_assert_cmphex(qpci_config_readb(td.dev, ICH9_LPC_ACPI_CTRL), ==,
++                    ICH9_LPC_ACPI_CTRL_DEFAULT);
++    g_assert_cmphex(qpci_config_readl(td.dev, ICH9_LPC_RCBA), ==,
++                    ICH9_LPC_RCBA_DEFAULT);
++    test_end(&td);
++}
++
+ static void test_tco_second_timeout_pause(void)
+ {
+     TestData td;
+@@ -454,6 +511,7 @@ int main(int argc, char **argv)
+     g_test_init(&argc, &argv, NULL);
+ 
+     qtest_add_func("tco/defaults", test_tco_defaults);
++    qtest_add_func("tco/s3/keepalive-and-expiry", test_tco_s3_keepalive_and_expiry);
+     qtest_add_func("tco/timeout/no_action", test_tco_timeout);
+     qtest_add_func("tco/timeout/no_action/max", test_tco_max_timeout);
+     qtest_add_func("tco/second_timeout/pause", test_tco_second_timeout_pause);

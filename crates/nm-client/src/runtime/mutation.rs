@@ -1,7 +1,7 @@
 //! Explicit NM writes/control. Every request has one dispatch, no fallback or retry.
 use super::{ActiveConnection, SavedProfile, observation::Observation};
 use crate::{
-    ClientError, encode_profile,
+    ClientError,
     transport::{Bus, NM, ROOT},
 };
 use nm_tunnel_profile::Profile;
@@ -134,7 +134,17 @@ impl<'a> Mutation<'a> {
             .ok_or(ClientError::Timeout)
     }
 
+    #[cfg(test)]
     pub(super) async fn save(&self, profile: &Profile) -> Result<SavedProfile, ClientError> {
+        self.save_with_options(profile, crate::ProfileOptions::default())
+            .await
+    }
+
+    pub(super) async fn save_with_options(
+        &self,
+        profile: &Profile,
+        options: crate::ProfileOptions,
+    ) -> Result<SavedProfile, ClientError> {
         let proxy = self
             .bus
             .proxy(
@@ -142,7 +152,7 @@ impl<'a> Mutation<'a> {
                 "org.freedesktop.NetworkManager.Settings",
             )
             .await?;
-        let settings = encode_profile(profile);
+        let settings = nm_tunnel_schema::encode_profile_with_options(profile, options);
         // TO_DISK only; never fall back to memory on authorization/storage failure.
         let flags = 1_u32;
         let args: HashMap<String, OwnedValue> = HashMap::new();

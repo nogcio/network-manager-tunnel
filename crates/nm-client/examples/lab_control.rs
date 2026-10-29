@@ -118,13 +118,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     activate(&saved).await?;
     timeout(Duration::from_secs(30), async {
         loop {
-            if snapshot()
-                .await?
-                .active
-                .iter()
-                .any(|a| a.profile().id() == saved.id() && a.state() == ConnectionState::Connected)
-            {
-                return Ok::<(), nm_tunnel_client::ClientError>(());
+            match snapshot().await {
+                Ok(observed)
+                    if observed.active.iter().any(|a| {
+                        a.profile().id() == saved.id() && a.state() == ConnectionState::Connected
+                    }) =>
+                {
+                    return Ok::<(), nm_tunnel_client::ClientError>(());
+                }
+                // TUN creation/rename can change NM's object list during this
+                // read. Retry only observation under the existing deadline;
+                // never repeat save or activation after an accepted request.
+                Err(nm_tunnel_client::ClientError::Stale) | Ok(_) => {}
+                Err(error) => return Err(error),
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }

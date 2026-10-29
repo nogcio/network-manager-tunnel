@@ -1,0 +1,706 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 08f54d3..02ab4fe 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -107,6 +107,17 @@ version = "2.0.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
+
++[[package]]
++name = "aes"
++version = "0.9.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "35f0f96ce78e38c3dc6d8948aa8163d06385be74000f3c7a95bf1eef35d3ea32"
++dependencies = [
++ "cipher",
++ "cpubits",
++ "cpufeatures",
++]
++
+ [[package]]
+ name = "ahash"
+ version = "0.8.12"
+@@ -555,6 +566,15 @@ dependencies = [
+  "hybrid-array",
+ ]
+
++[[package]]
++name = "block-padding"
++version = "0.4.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "710f1dd022ef4e93f8a438b4ba958de7f64308434fa6a87104481645cc30068b"
++dependencies = [
++ "hybrid-array",
++]
++
+ [[package]]
+ name = "block2"
+ version = "0.5.1"
+@@ -740,6 +760,15 @@ dependencies = [
+  "wayland-client",
+ ]
+
++[[package]]
++name = "cbc"
++version = "0.2.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ce2dc9ee5f88d11e0beb842c88b33c8a5cf0d1329c4b19494af42b07dbfe8896"
++dependencies = [
++ "cipher",
++]
++
+ [[package]]
+ name = "cc"
+ version = "1.6.0"
+@@ -776,6 +805,16 @@ dependencies = [
+  "windows-link 0.2.1",
+ ]
+
++[[package]]
++name = "cipher"
++version = "0.5.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e8cf2a2c93cd704877c0858356ed03480ff301ee950b43f1cbe4573b088bfa6c"
++dependencies = [
++ "crypto-common",
++ "inout",
++]
++
+ [[package]]
+ name = "clipboard-win"
+ version = "5.4.1"
+@@ -814,6 +853,12 @@ dependencies = [
+  "x11rb",
+ ]
+
++[[package]]
++name = "cmov"
++version = "0.5.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
++
+ [[package]]
+ name = "cocoa"
+ version = "0.25.0"
+@@ -1124,6 +1169,7 @@ name = "cosmic-applet-network"
+ version = "1.10.0"
+ dependencies = [
+  "async-fn-stream",
++ "async-trait",
+  "futures",
+  "futures-util",
+  "i18n-embed",
+@@ -1133,6 +1179,7 @@ dependencies = [
+  "nmrs",
+  "rust-embed",
+  "rustc-hash 2.1.3",
++ "secret-service",
+  "secure-string",
+  "tokio",
+  "tracing",
+@@ -1587,6 +1634,12 @@ dependencies = [
+  "thiserror 2.0.21",
+ ]
+
++[[package]]
++name = "cpubits"
++version = "0.1.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "15b85f9c39137c3a891689859392b1bd49812121d0d61c9caf00d46ed5ce06ae"
++
+ [[package]]
+ name = "cpufeatures"
+ version = "0.3.1"
+@@ -1665,6 +1718,15 @@ dependencies = [
+  "dtor",
+ ]
+
++[[package]]
++name = "ctutils"
++version = "0.4.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "fe3e9d21d39e6f39ff46e03d5b621424f88ee23d8a1672c6bfc9ccc7f2da4f6a"
++dependencies = [
++ "cmov",
++]
++
+ [[package]]
+ name = "cursor-icon"
+ version = "1.2.0"
+@@ -1908,6 +1970,7 @@ dependencies = [
+  "block-buffer",
+  "const-oid",
+  "crypto-common",
++ "ctutils",
+ ]
+
+ [[package]]
+@@ -2806,6 +2869,24 @@ version = "0.2.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
+
++[[package]]
++name = "hkdf"
++version = "0.13.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4aaa26c720c68b866f2c96ef5c1264b3e6f473fe5d4ce61cd44bbe913e553018"
++dependencies = [
++ "hmac",
++]
++
++[[package]]
++name = "hmac"
++version = "0.13.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f"
++dependencies = [
++ "digest",
++]
++
+ [[package]]
+ name = "hybrid-array"
+ version = "0.4.15"
+@@ -3678,6 +3759,16 @@ dependencies = [
+  "libc",
+ ]
+
++[[package]]
++name = "inout"
++version = "0.2.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3b5cf4372d022092674a83b8febf5865f7a573cc0c5baec5e49c879b6a20978f"
++dependencies = [
++ "block-padding",
++ "hybrid-array",
++]
++
+ [[package]]
+ name = "input"
+ version = "0.9.1"
+@@ -4456,8 +4547,6 @@ dependencies = [
+ [[package]]
+ name = "nmrs"
+ version = "3.5.5"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "d85b4f3e82a7d5d97bd6db2e37e650f8334f2996bd9c81c7a4b350d4a35be671"
+ dependencies = [
+  "async-trait",
+  "base64 0.22.1",
+@@ -4518,6 +4607,20 @@ dependencies = [
+  "windows-sys 0.61.2",
+ ]
+
++[[package]]
++name = "num"
++version = "0.4.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "35bd024e8b2ff75562e5f34e7f4905839deb4b22955ef5e73d2fea1b9813cb23"
++dependencies = [
++ "num-bigint",
++ "num-complex",
++ "num-integer",
++ "num-iter",
++ "num-rational",
++ "num-traits",
++]
++
+ [[package]]
+ name = "num-bigint"
+ version = "0.4.8"
+@@ -4528,6 +4631,15 @@ dependencies = [
+  "num-traits",
+ ]
+
++[[package]]
++name = "num-complex"
++version = "0.4.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "73f88a1307638156682bada9d7604135552957b7818057dcef22705b4d509495"
++dependencies = [
++ "num-traits",
++]
++
+ [[package]]
+ name = "num-conv"
+ version = "0.2.2"
+@@ -4554,6 +4666,16 @@ dependencies = [
+  "num-traits",
+ ]
+
++[[package]]
++name = "num-iter"
++version = "0.1.46"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c92800bd69a1eac91786bcfe9da64a897eb72911b8dc3095decbd07429e8048b"
++dependencies = [
++ "num-integer",
++ "num-traits",
++]
++
+ [[package]]
+ name = "num-rational"
+ version = "0.4.2"
+@@ -5696,6 +5818,25 @@ dependencies = [
+  "tiny-skia 0.12.0",
+ ]
+
++[[package]]
++name = "secret-service"
++version = "5.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5107b24b91445dd2aa449a258a1807b63240942157292354dc5bfdbeb8bc6db8"
++dependencies = [
++ "aes",
++ "cbc",
++ "futures-util",
++ "getrandom 0.4.3",
++ "hkdf",
++ "hybrid-array",
++ "num",
++ "once_cell",
++ "serde",
++ "sha2",
++ "zbus",
++]
++
+ [[package]]
+ name = "secure-string"
+ version = "0.3.0"
+diff --git a/Cargo.toml b/Cargo.toml
+index 77d96a9..682f7f9 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -83,6 +83,9 @@ ignored = ["libcosmic"]
+ [patch."https://github.com/smithay/client-toolkit.git"]
+ sctk = { package = "smithay-client-toolkit", version = "0.20.0" }
+
++[patch.crates-io]
++nmrs = { path = "../nmrs/nmrs" }
++
+ [patch."https://github.com/pop-os/cosmic-protocols"]
+ cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols//", rev = "c0cff4d" }
+ cosmic-client-toolkit = { git = "https://github.com/pop-os/cosmic-protocols//", rev = "c0cff4d" }
+diff --git a/cosmic-applet-network/Cargo.toml b/cosmic-applet-network/Cargo.toml
+index 632b909..8076b89 100644
+--- a/cosmic-applet-network/Cargo.toml
++++ b/cosmic-applet-network/Cargo.toml
+@@ -27,3 +27,5 @@ indexmap = "2.13.0"
+ secure-string = "0.3.0"
+ uuid = { version = "1.21.0", features = ["v4"] }
+ nmrs = "3.5.2"
++async-trait = "0.1"
++secret-service = { version = "=5.2.0", default-features = false, features = ["rt-tokio-crypto-rust"] }
+diff --git a/cosmic-applet-network/src/app.rs b/cosmic-applet-network/src/app.rs
+index b9baa10..f865b9a 100644
+--- a/cosmic-applet-network/src/app.rs
++++ b/cosmic-applet-network/src/app.rs
+@@ -939,10 +939,12 @@ fn secret_agent_task(
+     mut reregister_requests: UnboundedReceiver<()>,
+ ) -> Task<NmAgentEvent> {
+     cosmic::Task::stream(async_fn_stream::fn_stream(move |emitter| async move {
++        let store = Arc::new(crate::vpn_store::VpnStore::default());
+         let registration = SecretAgent::builder()
+             .with_identifier(identifier)
+             .with_object_path("/org/freedesktop/NetworkManager/SecretAgent")
+             .with_capabilities(SecretAgentCapabilities::VPN_HINTS)
++            .with_store(store.clone())
+             .register()
+             .await;
+
+@@ -958,6 +960,32 @@ fn secret_agent_task(
+             tokio::select! {
+                 req = requests.next() => match req {
+                     Some(req) => {
++                        // No lookup may outlive the request's bounded NM agent
++                        // lifetime or block cancellation delivery indefinitely.
++                        let lookup = {
++                            let lookup = tokio::time::timeout(std::time::Duration::from_secs(10), store.lookup(&req));
++                            tokio::pin!(lookup);
++                            loop {
++                                tokio::select! {
++                                    result = &mut lookup => break Some(result),
++                                    Some(cancel) = handle.cancellations().next() => {
++                                        let _ = emitter.emit(NmAgentEvent::CancelGetSecrets).await;
++                                        if cancel.connection_path == req.connection_path {
++                                            break None;
++                                        }
++                                    }
++                                }
++                            }
++                        };
++                        let Some(lookup) = lookup else { continue; };
++                        if let Ok(Ok(Some(secrets))) = lookup {
++                            let _ = req.responder.vpn_secrets(secrets).await;
++                            continue;
++                        }
++                        if !req.flags.contains(nmrs::agent::SecretAgentFlags::ALLOW_INTERACTION) {
++                            let _ = req.responder.no_secrets().await;
++                            continue;
++                        }
+                         let event = secret_request_to_event(req);
+                         let _ = emitter.emit(event).await;
+                     }
+@@ -988,7 +1016,12 @@ fn secret_request_to_event(req: SecretRequest) -> NmAgentEvent {
+         SecretSetting::WifiPsk { ssid } => AgentSetting::WifiPsk { ssid },
+         SecretSetting::WifiEap { .. } => AgentSetting::WifiEap,
+         SecretSetting::Vpn { .. } => AgentSetting::Vpn {
+-            secret_keys: req.hints.clone(),
++            secret_keys: req
++                .hints
++                .iter()
++                .filter(|hint| !hint.starts_with("x-vpn-message:"))
++                .cloned()
++                .collect(),
+         },
+         _ => AgentSetting::Other,
+     };
+@@ -1445,7 +1478,7 @@ impl cosmic::Application for CosmicNetworkApplet {
+                     tracing::debug!(
+                         "NetworkManager restarted; refreshing network snapshot and secret agent"
+                     );
+-                    if let Some(mut tx) = self.secret_agent_reregister_tx.clone() {
++                    if let Some(tx) = self.secret_agent_reregister_tx.clone() {
+                         if let Err(e) = tx.unbounded_send(()) {
+                             tracing::warn!("secret agent re-registration task stopped: {e}");
+                             self.secret_agent_reregister_tx = None;
+diff --git a/cosmic-applet-network/src/lib.rs b/cosmic-applet-network/src/lib.rs
+index f1ce1c6..64c5971 100644
+--- a/cosmic-applet-network/src/lib.rs
++++ b/cosmic-applet-network/src/lib.rs
+@@ -3,6 +3,7 @@
+ mod app;
+ mod config;
+ mod localize;
++mod vpn_store;
+
+ use crate::localize::localize;
+
+diff --git a/cosmic-applet-network/src/vpn_store.rs b/cosmic-applet-network/src/vpn_store.rs
+new file mode 100644
+index 0000000..cb2fa61
+--- /dev/null
++++ b/cosmic-applet-network/src/vpn_store.rs
+@@ -0,0 +1,323 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++//! Standard NM VPN credential storage owned by the existing desktop agent.
++//! No NM profile database, plaintext fallback or application-managed encryption.
++use std::collections::{HashMap, HashSet};
++
++use nmrs::agent::{
++    SecretAgentFlags, SecretConnection, SecretRequest, SecretStore, SecretStoreError,
++};
++use secret_service::{EncryptionType, SecretService};
++use tokio::sync::Mutex;
++
++#[derive(Default)]
++pub(crate) struct VpnStore {
++    // Serialize store mutations and reads; never hold this across a VPN prompt.
++    // Secret Service dispatch may already commit when a deadline drops a future.
++    serial: Mutex<()>,
++}
++
++fn failed() -> SecretStoreError {
++    SecretStoreError::default()
++}
++
++fn text(
++    connection: &SecretConnection,
++    section: &str,
++    key: &str,
++) -> Result<String, SecretStoreError> {
++    connection
++        .get(section)
++        .and_then(|s| s.get(key))
++        .and_then(|v| <&str>::try_from(v).ok())
++        .map(str::to_owned)
++        .ok_or_else(failed)
++}
++
++fn dictionary(
++    connection: &SecretConnection,
++    key: &str,
++) -> Result<HashMap<String, String>, SecretStoreError> {
++    connection
++        .get("vpn")
++        .and_then(|s| s.get(key))
++        .map(|v| {
++            v.try_clone()
++                .map_err(|_| failed())
++                .and_then(|v| HashMap::try_from(v).map_err(|_| failed()))
++        })
++        .unwrap_or_else(|| Ok(HashMap::new()))
++}
++
++fn key_valid(key: &str) -> bool {
++    !key.is_empty() && key.len() <= 128 && key.bytes().all(|b| b.is_ascii_graphic())
++}
++
++fn agent_owned(data: &HashMap<String, String>, key: &str) -> Result<bool, SecretStoreError> {
++    match data
++        .get(&format!("{key}-flags"))
++        .map(String::as_str)
++        .unwrap_or("0")
++    {
++        "1" => Ok(true),
++        "0" | "2" | "3" | "4" | "5" | "6" | "7" => Ok(false),
++        _ => Err(failed()),
++    }
++}
++
++fn attributes<'a>(
++    uuid: &'a str,
++    service: Option<&'a str>,
++    key: Option<&'a str>,
++) -> HashMap<&'a str, &'a str> {
++    let mut attrs = HashMap::from([
++        ("xdg:schema", "org.freedesktop.NetworkManager.Connection"),
++        ("connection-uuid", uuid),
++        ("setting-name", "vpn"),
++    ]);
++    if let Some(service) = service {
++        attrs.insert("vpn-service-type", service);
++    }
++    if let Some(key) = key {
++        attrs.insert("setting-key", key);
++    }
++    attrs
++}
++
++fn identity(connection: &SecretConnection) -> Result<(String, String), SecretStoreError> {
++    let uuid = text(connection, "connection", "uuid")?;
++    uuid::Uuid::parse_str(&uuid).map_err(|_| failed())?;
++    let service = text(connection, "vpn", "service-type")?;
++    if service.is_empty() || service.len() > 255 {
++        return Err(failed());
++    }
++    Ok((uuid, service))
++}
++
++impl VpnStore {
++    /// Return only agent-owned requested keys. REQUEST_NEW bypasses storage;
++    /// locked storage never prompts unless NM explicitly allows interaction.
++    /// Errors are redacted by the caller and never select another store.
++    pub(crate) async fn lookup(
++        &self,
++        req: &SecretRequest,
++    ) -> Result<Option<HashMap<String, String>>, SecretStoreError> {
++        let nmrs::agent::SecretSetting::Vpn { service_type, .. } = &req.setting else {
++            return Ok(None);
++        };
++        if req.flags.contains(SecretAgentFlags::REQUEST_NEW) {
++            return Ok(None);
++        }
++        uuid::Uuid::parse_str(&req.connection_uuid).map_err(|_| failed())?;
++        let hints: Vec<_> = req
++            .hints
++            .iter()
++            .filter(|s| !s.starts_with("x-vpn-message:"))
++            .collect();
++        if hints.len() > 32 || hints.iter().any(|key| !key_valid(key)) {
++            return Err(failed());
++        }
++        let mut wanted = HashSet::new();
++        if hints.is_empty() {
++            for key in req.vpn_data.keys().filter_map(|s| s.strip_suffix("-flags")) {
++                if !key_valid(key) {
++                    return Err(failed());
++                }
++                if agent_owned(&req.vpn_data, key)? {
++                    wanted.insert(key.to_owned());
++                }
++            }
++        } else {
++            for key in hints {
++                if !agent_owned(&req.vpn_data, key)? {
++                    return Ok(None);
++                }
++                wanted.insert(key.clone());
++            }
++        }
++        if wanted.is_empty() {
++            return Ok(None);
++        }
++        if wanted.len() > 32 {
++            return Err(failed());
++        }
++        let _guard = self.serial.lock().await;
++        let service = SecretService::connect(EncryptionType::Dh)
++            .await
++            .map_err(|_| failed())?;
++        let collection = service
++            .get_default_collection()
++            .await
++            .map_err(|_| failed())?;
++        if collection.is_locked().await.map_err(|_| failed())? {
++            if !req.flags.contains(SecretAgentFlags::ALLOW_INTERACTION) {
++                return Ok(None);
++            }
++            collection.unlock().await.map_err(|_| failed())?;
++        }
++        let mut result = HashMap::new();
++        for key in wanted {
++            let items = collection
++                .search_items(attributes(
++                    &req.connection_uuid,
++                    Some(service_type),
++                    Some(&key),
++                ))
++                .await
++                .map_err(|_| failed())?;
++            // Ambiguous duplicates are not arbitrarily selected.
++            if items.is_empty() {
++                return Ok(None);
++            }
++            if items.len() != 1 {
++                return Err(failed());
++            }
++            let bytes = items[0].get_secret().await.map_err(|_| failed())?;
++            if bytes.is_empty() || bytes.len() > 4096 {
++                return Err(failed());
++            }
++            result.insert(key, String::from_utf8(bytes).map_err(|_| failed())?);
++        }
++        Ok(Some(result))
++    }
++}
++
++#[async_trait::async_trait]
++impl SecretStore for VpnStore {
++    async fn save(&self, connection: &SecretConnection) -> Result<(), SecretStoreError> {
++        if text(connection, "connection", "type")? != "vpn" {
++            return Ok(());
++        }
++        let (uuid, vpn_service) = identity(connection)?;
++        let data = dictionary(connection, "data")?;
++        let secrets = dictionary(connection, "secrets")?;
++        if secrets.values().map(String::len).sum::<usize>() > 64 * 1024 {
++            return Err(failed());
++        }
++        let keys: HashSet<_> = secrets
++            .keys()
++            .map(String::as_str)
++            .chain(data.keys().filter_map(|key| key.strip_suffix("-flags")))
++            .collect();
++        if keys.len() > 32 {
++            return Err(failed());
++        }
++        // Validate the complete payload before any Secret Service operation.
++        let mut operations = Vec::new();
++        for key in keys {
++            if !key_valid(key) {
++                return Err(failed());
++            }
++            let owned = agent_owned(&data, key)?;
++            let secret = secrets.get(key);
++            if secret.is_some_and(|s| s.is_empty() || s.len() > 4096) {
++                return Err(failed());
++            }
++            operations.push((key, owned, secret));
++        }
++        if operations.is_empty() {
++            return Ok(());
++        }
++        let _guard = self.serial.lock().await;
++        let service = SecretService::connect(EncryptionType::Dh)
++            .await
++            .map_err(|_| failed())?;
++        let collection = service
++            .get_default_collection()
++            .await
++            .map_err(|_| failed())?;
++        collection.unlock().await.map_err(|_| failed())?;
++        for (key, owned, secret) in operations {
++            let attrs = attributes(&uuid, Some(&vpn_service), Some(key));
++            if !owned {
++                for item in collection.search_items(attrs).await.map_err(|_| failed())? {
++                    item.delete().await.map_err(|_| failed())?;
++                }
++            } else if let Some(secret) = secret {
++                collection
++                    .create_item(
++                        "NetworkManager VPN credential",
++                        attrs,
++                        secret.as_bytes(),
++                        true,
++                        "text/plain",
++                    )
++                    .await
++                    .map_err(|_| failed())?;
++            }
++        }
++        Ok(())
++    }
++
++    async fn delete(&self, connection: &SecretConnection) -> Result<(), SecretStoreError> {
++        if text(connection, "connection", "type")? != "vpn" {
++            return Ok(());
++        }
++        let (uuid, _) = identity(connection)?;
++        let _guard = self.serial.lock().await;
++        let service = SecretService::connect(EncryptionType::Dh)
++            .await
++            .map_err(|_| failed())?;
++        let collection = service
++            .get_default_collection()
++            .await
++            .map_err(|_| failed())?;
++        collection.unlock().await.map_err(|_| failed())?;
++        for item in collection
++            .search_items(attributes(&uuid, None, None))
++            .await
++            .map_err(|_| failed())?
++        {
++            item.delete().await.map_err(|_| failed())?;
++        }
++        Ok(())
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn only_explicit_agent_owned_flags_permit_persistence_or_lookup() {
++        assert!(!agent_owned(&HashMap::new(), "uuid").unwrap());
++        for flags in 0..=7 {
++            assert_eq!(
++                agent_owned(
++                    &HashMap::from([("uuid-flags".into(), flags.to_string())]),
++                    "uuid"
++                )
++                .unwrap(),
++                flags == 1
++            );
++        }
++        for flags in ["-1", "8", "", "garbage"] {
++            assert!(
++                agent_owned(
++                    &HashMap::from([("uuid-flags".into(), flags.into())]),
++                    "uuid"
++                )
++                .is_err()
++            );
++        }
++        let attrs = attributes(
++            "synthetic-profile-uuid",
++            Some("synthetic.service"),
++            Some("uuid"),
++        );
++        assert_eq!(
++            attrs.get("connection-uuid"),
++            Some(&"synthetic-profile-uuid")
++        );
++        assert_eq!(attrs.get("vpn-service-type"), Some(&"synthetic.service"));
++        assert_eq!(attrs.get("setting-key"), Some(&"uuid"));
++        assert!(!key_valid(""));
++        assert!(!key_valid("bad\nkey"));
++    }
++
++    #[tokio::test]
++    async fn invalid_store_payload_rejects_before_opening_the_keyring() {
++        let store = VpnStore::default();
++        assert!(store.save(&HashMap::new()).await.is_err());
++        assert!(store.delete(&HashMap::new()).await.is_err());
++    }
++}

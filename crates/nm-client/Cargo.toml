@@ -23,4 +23,4 @@ workspace = true
 
 [dev-dependencies]
 nm-tunnel-subscription.workspace = true
-tokio = { workspace = true, features = ["process", "io-util", "net"] }
+tokio = { workspace = true, features = ["process", "io-util", "net", "signal"] }

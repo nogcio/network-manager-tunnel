@@ -145,9 +145,11 @@ in [ADR 0028](../../docs/decisions/0028-subscription-url-secret-service.md).
    legacy node-only mode requires an explicit choice with the warning above.
 2. Review/search the admitted source's servers.
    Unsupported entries have an explanation, not a Save action.
-3. Review the storage notice: **Save profile** always saves profiles and credentials
-   on disk in NM system storage, not a desktop keyring. NM owns file permissions and
-   authorization; a rejected disk save never falls back to temporary storage.
+3. Review the storage notice: **Save profile** saves profile settings through NM
+   and delegates credentials to the desktop's registered NM secret agent. There is
+   no direct VPN keyring access or silent system-secret fallback. Existing profiles
+   keep their storage mode. A new persistent session waits under protection through
+   network loss until recovery or explicit Disconnect; startup/autoconnect stays off.
 4. Press **Save profile** on a particular row. Autoconnect stays off; saving never
    connects. Return to Connections to explicitly connect the observed NM profile.
 
@@ -264,7 +266,10 @@ above and below the rows; page changes reset the viewport to the top.
 No discovery, startup fetching, redirects, automatic refresh, clipboard discovery,
 disk cache, subscription history or automatic connection is implemented. Saved NM
 profiles remain usable without a subscription. There are no manual protocol fields,
-secret retrieval or desktop secret-agent implementation.
+direct secret retrieval or competing desktop secret-agent implementation. Standard
+NM agent requests use exact UUID hints through the backend's bounded interactive
+handshake; real desktop keyring unlock/prompt acceptance remains incomplete. See
+[ADR 0033](../../docs/decisions/0033-persistent-network-lifetime-and-nm-agents.md).
 See the [subscription](../../crates/subscription/README.md) and
 [NM client](../../crates/nm-client/README.md) contracts.
 

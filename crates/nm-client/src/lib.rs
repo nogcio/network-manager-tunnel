@@ -4,15 +4,15 @@ mod runtime;
 mod settings;
 mod telemetry;
 mod transport;
-pub use nm_tunnel_schema::{LanBypass, ProfileChanges};
+pub use nm_tunnel_schema::{CredentialStorage, LanBypass, ProfileChanges, ProfileOptions};
 pub use recovery::{RecoveryError, RecoveryStatus, recovery_status};
 pub use runtime::{
     ActiveConnection, ConnectionState, SavedProfile, Snapshot, activate, deactivate,
-    delete_profile, edit_profile, replace_profile, save_profile, snapshot, update_from_source,
+    delete_profile, edit_profile, replace_profile, save_profile, save_profile_with_options,
+    snapshot, update_from_source,
 };
 pub use telemetry::{TrafficCounters, TrafficSample, UsageError, UsageSnapshot, usage_snapshot};
 
-use nm_tunnel_schema::encode_profile;
 use std::time::Duration;
 
 const TIMEOUT: Duration = Duration::from_secs(20);

@@ -39,13 +39,21 @@ or a performance measurement. Production appearance follows the desktop theme.*
 - Review optional provider-reported usage, quota, expiry and name/refresh hints,
   separately from local counters. Explicit subscription updates support bounded
   memory-only HTTP validators; hints never schedule updates or reconnect the VPN.
-- Save profiles and credentials to disk in NetworkManager so they survive restart,
-  with autoconnect off.
+- Save profile settings in NetworkManager with autoconnect off. New COSMIC saves
+  delegate credentials to the desktop's standard NM secret agent; existing profiles
+  keep their storage mode. The client also supports system and not-saved modes.
+- Keep a persistent VPN session across physical-network changes. Old flows close;
+  endpoint/DNS/LAN authority is rebuilt from NM. While the network is unavailable,
+  traffic stays blocked until recovery or explicit Disconnect. This does not enable
+  startup activation, migrate existing profiles or create a permanent boot guard.
 - Select DNS for a newly added profile: source/default policy, the current network's
   plain IPv4 DNS outside VPN, or one explicit public IPv4 resolver through VPN.
 - Explicitly keep all RFC1918 IPv4 networks outside VPN, including routed LANs,
   while retaining the selected DNS interception policy. Old connected-only profiles
   keep their narrower mode until explicitly changed.
+- Connect without a third-party readiness website or DNS test query. Readiness and
+  periodic health verify the configured server's secure transport only; Connected
+  does not certify VLESS credential acceptance, DNS availability or Internet access.
 
 The backend uses Rust protocol libraries, not an external sing-box or Xray process.
 The supported configuration model covers VLESS over TCP with TLS or REALITY,
@@ -60,27 +68,36 @@ support is not a guarantee of compatibility with every server.
   independent review and broader packet/deployment checks remain required.
 - The experimental tunnel carries IPv4 TCP/UDP; IPv6 is blocked. Legacy default DNS
   is `1.1.1.1`, with explicit profile overrides. Only the checked complete-source
-  policy subset is supported, not arbitrary DNS/routing configurations or live
-  endpoint/uplink changes. Override forwarding has not passed full NM/VM acceptance.
+  policy subset is supported, not arbitrary DNS/routing configurations or independent
+  endpoint rotation. Persistent sessions can rebuild on NM uplink changes. Offline
+  NM/VM checks cover manual and current-network
+  DNS forwarding, not every DHCP environment or encrypted resolver.
   The first version is explicitly IPv4-only: IPv6 literal endpoints cannot be added,
   and hostname endpoints require an A record. IPv6 support is deferred, not a
   prerequisite for the first joint test; see
   [ADR 0017](docs/decisions/0017-ipv4-only-first-version.md).
-- Live REALITY compatibility and long-running reliability remain unresolved.
+- Broader REALITY interoperability and long-running reliability remain unverified.
   Local runtime checks do not establish production security or interoperability.
-- Terminal failure now ends the VPN session and automatically removes its guards,
+- Terminal failure ends the VPN session and automatically removes its guards,
   restoring ordinary networking **without VPN**. Independent systemd-owned orphan
   recovery, a process-pinned liveness watchdog and independent UI progress are
-  implemented. D-Bus ProcessFD support is required. Synthetic legacy IPv4 VM checks
-  passed real TUN TCP echo and crash/hang cleanup; broader packet and failure
-  coverage remains pending; see
+  implemented. D-Bus ProcessFD support is required. The offline VM suite exercises
+  real TUN TCP/UDP/DNS, physical isolation, crash/hang cleanup, recovery-helper
+  restart and active-image replacement; broader coexistence and failure coverage
+  remains pending; see
   [the recovery contract](docs/decisions/0026-automatic-session-recovery.md).
 - Saved edits and explicitly mapped source updates require NM 1.44+ and keep the
   running VPN unchanged. Inactive save/edit/update/delete passed a bounded real-NM
-  VM check; active-session edits and desktop Polkit prompts remain unaccepted;
+  VM check; offline active-session edits preserve the running processes and DNS.
+  Desktop Polkit prompts remain unaccepted;
   see [ADR 0027](docs/decisions/0027-cosmic-profile-and-source-management.md).
-- There is no manual protocol editor, automatic subscription refresh, YAML subscription
-  support or desktop secret-agent implementation.
+- There is no manual protocol editor, automatic subscription refresh or YAML
+  subscription support. Standard NM secret-agent integration exists; real desktop
+  keyring persistence acceptance currently fails with COSMIC applet 1:1.10.0-1:
+  saving an Agent-owned profile creates no keyring item. Unlock/prompt acceptance
+  remains incomplete; this path is not ready for deployment. An owner-authorized
+  [local upstream patch pair](patches/cosmic-nm-agent/README.md) passes bounded
+  VM save/reopen/delete acceptance, but is not installed or upstream-approved.
 - Complete subscription format is requested by default, but unsupported DNS/routing
   blocks import without a node-only fallback. Experimental TCP hostname rules exist
   in backend schema v2 alongside DNS overrides. Bounded complete IPv4 execution is
@@ -147,6 +164,24 @@ cargo xtask features --non-interactive
 
 Checks print progress and save logs under `target/xtask/logs/`. Passing them does
 not verify a live VPN or native desktop accessibility.
+
+The explicit [offline VM suite](docs/testing/vm-acceptance.md) uses a checksum-verified
+prepared image, fresh overlays, synthetic peers and no QEMU NIC. It neither installs
+on the host nor changes its VPN. Its scenario contract and remaining acceptance
+gaps are documented separately from ordinary repository checks.
+The 35-case core contract passes, including native source UDP/TCP DNS with
+Direct/Proxy resolver detours, FakeIP traffic, domain XUDP, Block rejection,
+persistent two-uplink recovery and standard NM secret-agent requests.
+The expanded offline suite passes **40/40** with explicit local QEMU and COSMIC/nmrs
+patch candidates: real DHCP, guest S3/resume, keyring persistence, ten-minute
+post-resume TCP/UDP traffic, flow draining and terminal cleanup. The installed
+QEMU still reproduces an ICH9 watchdog reset after S3; the packaged COSMIC applet
+still lacks VPN secret persistence. Neither candidate is installed on the host.
+Catastrophic backend death still removes protection and returns ordinary networking
+without VPN, even during recovery wait. These results are not a capacity benchmark
+or full product acceptance. Positive certificate-trusted
+TLS/WebSocket/DoT/DoH fixtures, reboot, multi-hour load and full native desktop
+acceptance remain incomplete.
 
 - [Contributing](CONTRIBUTING.md) and [repository instructions](AGENTS.md)
 - [Architecture and component boundaries](docs/architecture.md)

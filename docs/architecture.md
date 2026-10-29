@@ -33,6 +33,10 @@ NetworkManager is the source of truth for connection profiles and activation.
 The VPN service owns TUN/runtime resources and reports generic/IP configuration
 and lifecycle through the standard VPN API. NM applies normal IP routes and DNS;
 the service must not race it with an independent route manager.
+Full-tunnel route reports use two IPv4 /1 captures rather than depending on the
+relative metrics of physical and VPN defaults. Existing LAN complements and
+source-policy connected-prefix captures preserve their checked scope; NM installs
+and removes the routes, while the guard denies unapproved physical egress.
 
 The COSMIC editor creates NM profiles and explicitly requests activation through NM.
 Saved network edits and explicitly mapped source updates use NM's version check;
@@ -106,12 +110,17 @@ available with a visible DNS/routing warning. Downloaded nodes stay in memory;
 bounded source metadata/URLs persist in desktop Secret Service under
 [ADR 0028](decisions/0028-subscription-url-secret-service.md). There are
 no manual protocol fields. The NM client implements experimental
-schema v1 with persistent NM storage on explicit Add, including system-stored
-credentials disclosed before adding. It reads saved/active metadata without
+schema v1/v2 with persistent NM profile storage on explicit Add. New COSMIC profiles
+delegate credentials to the registered desktop NM agent; the legacy client API
+keeps its system-storage default. Storage/lifetime choices are disclosed before
+adding. It reads saved/active metadata without
 secret lookup and uses standard NM control APIs. See its
 [contract](../crates/nm-client/README.md). There is no stable API,
-automatic schema migration or desktop secret-agent implementation yet. Explicit
-full-replacement remains available to its lab client under
+automatic schema migration or competing desktop secret-agent implementation. Standard
+NM interactive requests are integrated through SecretsRequired/NewSecrets with
+identity-bound admission; see
+[ADR 0033](decisions/0033-persistent-network-lifetime-and-nm-agents.md).
+Explicit full-replacement remains available to its lab client under
 [ADR 0018](decisions/0018-checked-profile-replacement.md); the COSMIC editor and mapped
 update contract is [ADR 0027](decisions/0027-cosmic-profile-and-source-management.md).
 
@@ -130,7 +139,8 @@ An explicit connected-RFC1918 LAN option derives bounded prefixes from the selec
 NM device before resources. It reports their IPv4 complement as VPN routes to NM,
 with interface-scoped guard exceptions only for those connected destinations. It
 does not implement broader subscription private-IP rules or IPv6 bypass. See
-[ADR 0012](decisions/0012-connected-lan-bypass.md); native packet acceptance is pending.
+[ADR 0012](decisions/0012-connected-lan-bypass.md). Bounded offline NM/packet
+scenarios exist; they do not establish arbitrary topology or production acceptance.
 
 An optional default-off schema-v2 DNS interception policy handles IPv4 UDP/TCP
 port 53 reaching TUN through a bounded profile-selected relay, before hostname
@@ -139,7 +149,8 @@ captures connected LAN destinations in TUN and grants bounded Unix TCP/UDP paylo
 relays only after DNS handling; root retains the new LAN IP sockets and the guard
 has no physical LAN exception. See [ADR 0013](decisions/0013-tun-dns-interception.md)
 and [ADR 0014](decisions/0014-intercepted-lan-relays.md). Other local IP protocols
-are unsupported in that combined mode; native packet acceptance remains pending.
+are unsupported in that combined mode. The offline VM suite exercises connected
+LAN TCP/UDP and DNS; broader topology acceptance remains incomplete.
 
 Experimental IPv4 FakeIP adds a root-owned durable identity journal, not another
 profile database. It uses XDG state, bounded library allocation without reuse and
@@ -198,11 +209,13 @@ Within `crates/nm-service/src/`:
 | Owner | Responsibility |
 | --- | --- |
 | `plugin.rs` | NM caller authorization, request admission validation and NM signal encoding |
+| `authentication.rs` | Resource-free interactive credential slot bound to NM connection identity, applied configuration and deadline |
 | `lifecycle.rs` | Ordered operation admission and preparation/session ownership |
 | `executable.rs` | Same-image worker executable capability and idle upgrade retirement observation |
 | `supervisor/plan.rs` | Pure network plan from a checked profile and bounded uplink observation |
 | `supervisor/session.rs` | Uplink discovery, privileged resource setup and ordered stop |
 | `supervisor/resources.rs` | External preparation/session resource owner and confirmed shutdown barrier |
+| `supervisor/roaming.rs` | Persistent-session uplink observation, flow revocation and bounded retry attempts retaining the original NM/TUN lifetime |
 | `supervisor/tun.rs` | New kernel TUN allocation and atomic public-name reservation |
 | `supervisor/broker.rs` | Independent request authorization, budget and root-owned relays |
 | `supervisor/uplink_dns.rs` | Fixed-resolver privileged plain DNS exchange |
@@ -289,14 +302,17 @@ compatibility stays at the codec boundary and never silently changes old profile
 1. Validate profile and secret requirements without allocating tunnel resources.
 2. Resolve the endpoint using an explicit bootstrap policy before DNS changes.
 3. Ensure every upstream/reconnect socket bypasses TUN. The experimental supervisor
-   marks and binds IPv4 sockets to the selected uplink; endpoint rotation, IPv6
-   endpoints and uplink changes remain unsupported rather than silently redialled.
+   marks and binds IPv4 sockets to the selected uplink. Persistent sessions revoke
+   old capabilities and rebuild from NM after uplink changes; endpoint rotation
+   independent of network changes and IPv6 endpoints remain unsupported.
 4. Establish required runtime resources and report configuration in NM API order.
    Design readiness around VLESS's limited authentication acknowledgement semantics;
    opening a TCP socket alone cannot prove the VPN is usable.
 5. On cancellation/failure, stop tasks, close sockets/TUN and report state to NM.
    Teardown is idempotent and automatic, including terminal failures; ordinary
-   networking resumes without VPN. An independent recovery owner must be armed
+   networking resumes without VPN after terminal cleanup. Persistent network loss
+   instead retains its admitted guards/TUN until recovery or explicit Disconnect.
+   An independent recovery owner must be armed
    before guard changes so backend death does not orphan cleanup.
 
 The experimental [service contract](../crates/nm-service/README.md) implements root

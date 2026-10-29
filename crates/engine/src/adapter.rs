@@ -83,15 +83,7 @@ pub(super) fn build_with_dialer(
     dialer: Arc<dyn meow_proxy::dialer::TcpDialer>,
 ) -> Result<VlessAdapter, Error> {
     let node = profile.node();
-    let mut chain = TransportChain::empty();
-    chain.push(Box::new(
-        TlsLayer::new(&tls_config(profile)?).map_err(|_| Error::Configuration)?,
-    ));
-    if let Some(ws) = ws_config(profile)? {
-        chain.push(Box::new(
-            WsLayer::new(ws).map_err(|_| Error::Configuration)?,
-        ));
-    }
+    let chain = transport(profile)?;
     Ok(VlessAdapter::new(
         "flow",
         node.endpoint().host(),
@@ -102,6 +94,21 @@ pub(super) fn build_with_dialer(
         chain,
         dialer,
     ))
+}
+
+/// Same checked secure transport for application flows and endpoint readiness.
+/// This does not send a VLESS destination or claim credential acceptance.
+pub(super) fn transport(profile: &Profile) -> Result<TransportChain, Error> {
+    let mut chain = TransportChain::empty();
+    chain.push(Box::new(
+        TlsLayer::new(&tls_config(profile)?).map_err(|_| Error::Configuration)?,
+    ));
+    if let Some(ws) = ws_config(profile)? {
+        chain.push(Box::new(
+            WsLayer::new(ws).map_err(|_| Error::Configuration)?,
+        ));
+    }
+    Ok(chain)
 }
 
 #[cfg(test)]

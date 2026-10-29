@@ -29,7 +29,9 @@ fetched automatically. Selection must not imply that a VPN connection is ready.
   refresh keeps the previous list, and selection alone performs no NM I/O.
 - Explicit preparation defaults to a session NM profile. [ADR 0007](0007-nm-profile-control.md)
   extends this to explicit NM persistent-storage consent and standard NM connection
-  control, without automatic activation. Desktop secret agents remain unimplemented.
+  control, without automatic activation. Standard desktop NM agents handle
+  credentials under [ADR 0033](0033-persistent-network-lifetime-and-nm-agents.md),
+  without a competing Tunnel agent or direct VPN keyring access.
   Autoconnect is false; Connect requires an observed profile and registered backend.
 - Keep GUI unprivileged and leave connections/routing/DNS to NM. No duplicate profile
   database. Future non-secret app persistence follows XDG paths; secrets need their
