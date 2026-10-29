@@ -44,6 +44,7 @@ All project documentation is maintained in English.
 - [ADR 0031: offline VM acceptance](decisions/0031-offline-vm-acceptance.md)
 - [ADR 0032: destination-free readiness](decisions/0032-destination-free-readiness.md)
 - [ADR 0033: persistent network lifetime and NM agents](decisions/0033-persistent-network-lifetime-and-nm-agents.md)
+- [ADR 0034: protection until explicit Disconnect](decisions/0034-explicit-disconnect-protection.md)
 - [COSMIC subscription UI](../frontends/cosmic/README.md)
 - [Experimental end-user workflow](user-guide.md)
 - [Arch installation and AUR direction](installation.md)

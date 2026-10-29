@@ -254,7 +254,7 @@ impl App {
                             .map(|hint| widget::text::body(hint).width(Length::Fill)),
                     ),
             );
-        if self.active_count() == 1 {
+        if self.active_count() == 1 || self.recovery.can_disconnect() {
             summary = summary.push(
                 widget::button::standard(fl!("disconnect"))
                     .on_press_maybe(self.can_disconnect().then_some(Message::Disconnect)),

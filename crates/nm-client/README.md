@@ -190,6 +190,16 @@ firewall certification. No profile identifiers, endpoints or credentials are fet
 
 ## Independent recovery observation
 
+Current source adds explicit protection release under
+[ADR 0034](../../docs/decisions/0034-explicit-disconnect-protection.md).
+`deactivate` pins the helper generation before the standard NM request and only
+then requests authorized release. `disconnect_protection` is the explicit fallback
+when a crash has removed NM's active object. Both are user actions, never read-side
+recovery. The helper checks Polkit NM network-control and process exit; no private
+profile database, credential access or client-side nft/route writer is introduced.
+Owner/generation changes and failed/ambiguous requests do not retry automatically.
+V2 adds `Blocked` status; the remaining read-only observation contract below applies.
+
 COSMIC consumes `recovery_status` without starting the helper or backend. It returns
 None for absent ownership, not confirmed cleanup. The three-second total deadline,
 NoAutoStart, uncached proxy and owner recheck match usage observation. Typed

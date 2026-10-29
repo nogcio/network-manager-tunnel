@@ -1,4 +1,5 @@
-//! Independent systemd-owned orphan-guard recovery, not a profile or route manager.
+//! Independent session-protection latch. Failure retains blocking; only an
+//! authorized explicit Disconnect releases it. No profile or route manager.
 use nm_tunnel_profile::SERVICE_TYPE;
 use std::{io, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
@@ -7,16 +8,20 @@ use zbus::message::Header;
 const NAME: &str = "org.freedesktop.NetworkManager.tunnel.Recovery";
 const PATH: &str = "/org/freedesktop/NetworkManager/tunnel/Recovery";
 const INTERFACE: &str = "org.freedesktop.NetworkManager.tunnel.Recovery";
-// Stable recovery ABI across compatible package updates; breaking semantics need
-// a new version/interface, never an in-place reinterpretation of Arm/Renew.
-const PROTOCOL: u32 = 1;
+// V2 deliberately rejects the v1 automatic-unblocking contract. Both processes
+// must retire before this incompatible upgrade; never restart a leased v1 helper.
+const PROTOCOL: u32 = 2;
 
+mod authorization;
 mod watchdog;
 
 #[derive(Default)]
 struct State {
     lease: Option<watchdog::Lease>,
     shutting_down: bool,
+    held: bool,
+    retained: bool,
+    generation: uuid::Uuid,
 }
 
 // Read-only projection stays available while the gate is held through termination/nft.
@@ -32,7 +37,7 @@ enum Progress {
     Cleaning,
     Retrying,
     Cleaned,
-    BackendCleanup,
+    Blocked,
 }
 
 impl Status {
@@ -49,8 +54,8 @@ impl Status {
             Progress::Cleaning => "cleaning",
             Progress::Retrying => "retrying",
             Progress::Cleaned => "cleaned",
-            Progress::BackendCleanup => "backend-cleanup",
             Progress::Starting => "starting",
+            Progress::Blocked => "blocked",
         }
     }
 }
@@ -66,7 +71,7 @@ struct Recovery {
 #[zbus::interface(name = "org.freedesktop.NetworkManager.tunnel.Recovery")]
 impl Recovery {
     async fn arm(&self, #[zbus(header)] header: Header<'_>) -> zbus::fdo::Result<()> {
-        self.renew_owner(&header, false).await
+        self.renew_owner(&header, false, true).await
     }
 
     async fn renew(
@@ -74,23 +79,85 @@ impl Recovery {
         cleaning: bool,
         #[zbus(header)] header: Header<'_>,
     ) -> zbus::fdo::Result<()> {
-        self.renew_owner(&header, cleaning).await
+        self.renew_owner(&header, cleaning, false).await
     }
 
     /// Non-activating clients observe only versioned status, never process identity.
     fn get_status(&self) -> (u32, String) {
         (PROTOCOL, self.status.name().into())
     }
+
+    async fn get_release_token(&self) -> (u32, String, bool) {
+        let gate = self.gate.lock().await;
+        (PROTOCOL, gate.generation.to_string(), gate.held)
+    }
+
+    /// This is the sole ordinary release operation. Neither lost ownership,
+    /// expired leases nor NM's automatic plugin Disconnect authorizes removal.
+    async fn disconnect(
+        &self,
+        generation: String,
+        #[zbus(header)] header: Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        authorization::disconnect(&self.bus, &header).await?;
+        self.release(&generation, crate::network::guard::clear_session_guards())
+            .await
+    }
 }
 
 impl Recovery {
-    async fn renew_owner(&self, header: &Header<'_>, cleaning: bool) -> zbus::fdo::Result<()> {
+    async fn release(
+        &self,
+        generation: &str,
+        clear: impl std::future::Future<Output = io::Result<()>>,
+    ) -> zbus::fdo::Result<()> {
         let mut gate = self.gate.lock().await;
-        if gate.shutting_down {
-            return Err(zbus::fdo::Error::Failed(
-                "Recovery helper is shutting down.".into(),
-            ));
+        let generation = uuid::Uuid::parse_str(generation).map_err(|_| stale())?;
+        if generation != gate.generation || !gate.held || gate.shutting_down {
+            return Err(stale());
         }
+        // Pin any replacement owner before terminating. Arm/release share this gate;
+        // a newer protected lifetime cannot be cleared by an older UI request.
+        if gate.lease.is_none()
+            && let Some(owner) = backend_owner(&self.bus).await.map_err(|_| stale())?
+        {
+            gate.lease = Some(
+                watchdog::Lease::pin(&self.bus, owner)
+                    .await
+                    .map_err(|_| stale())?,
+            );
+        }
+        self.status.set(Progress::Terminating);
+        if let Some(lease) = &gate.lease {
+            lease.terminate().await.map_err(|_| stale())?;
+        }
+        self.status.set(Progress::Cleaning);
+        if clear.await.is_err() {
+            self.status.set(Progress::Retrying);
+            return Err(stale());
+        }
+        gate.lease = None;
+        gate.held = false;
+        gate.retained = false;
+        gate.generation = uuid::Uuid::new_v4();
+        self.status.set(Progress::Cleaned);
+        Ok(())
+    }
+}
+
+fn stale() -> zbus::fdo::Error {
+    zbus::fdo::Error::Failed(
+        "Protection release refused or unconfirmed; no automatic retry.".into(),
+    )
+}
+
+impl Recovery {
+    async fn renew_owner(
+        &self,
+        header: &Header<'_>,
+        cleaning: bool,
+        arm: bool,
+    ) -> zbus::fdo::Result<()> {
         let owner = backend_owner(&self.bus)
             .await
             .map_err(|_| zbus::fdo::Error::Failed("Backend ownership unavailable.".into()))?;
@@ -101,6 +168,39 @@ impl Recovery {
         }
         let owner =
             owner.ok_or_else(|| zbus::fdo::Error::AccessDenied("Backend unavailable.".into()))?;
+        self.adopt(
+            owner,
+            cleaning,
+            arm,
+            crate::network::guard::retain_session_guard(),
+        )
+        .await
+    }
+
+    /// The caller has authenticated the current backend. Guard I/O remains lazy:
+    /// refusal/expired ownership cannot run an nft mutation.
+    async fn adopt(
+        &self,
+        owner: String,
+        cleaning: bool,
+        arm: bool,
+        retain: impl std::future::Future<Output = io::Result<()>>,
+    ) -> zbus::fdo::Result<()> {
+        let mut gate = self.gate.lock().await;
+        if gate.shutting_down {
+            return Err(stale());
+        }
+        if backend_owner(&self.bus)
+            .await
+            .map_err(|_| stale())?
+            .as_deref()
+            != Some(owner.as_str())
+        {
+            return Err(stale());
+        }
+        if !arm && !gate.held {
+            return Ok(());
+        }
         match &mut gate.lease {
             Some(lease) if lease.owner == owner => lease.renew(),
             Some(_) => Err(io::Error::other("Previous backend cleanup pending.")),
@@ -113,11 +213,25 @@ impl Recovery {
             },
         }
         .map_err(|_| zbus::fdo::Error::Failed("Recovery lease unavailable; current ownership and D-Bus ProcessFD support are required.".into()))?;
-        self.status.set(if cleaning {
-            Progress::BackendCleanup
-        } else {
-            Progress::Watching
-        });
+        if !gate.held || cleaning {
+            retain.await.map_err(|_| stale())?;
+        }
+        if !gate.held {
+            gate.held = true;
+            gate.generation = uuid::Uuid::new_v4();
+        }
+        if arm {
+            if gate.retained {
+                gate.generation = uuid::Uuid::new_v4();
+            }
+            gate.retained = false;
+        }
+        if cleaning {
+            gate.retained = true;
+            self.status.set(Progress::Blocked);
+        } else if !gate.retained {
+            self.status.set(Progress::Watching);
+        }
         Ok(())
     }
 }
@@ -186,14 +300,13 @@ pub(crate) async fn renew(bus: &zbus::Connection, cleaning: bool) -> io::Result<
     .map_err(|_| unavailable())?
 }
 
-/// Cleanup is lazy: unknown ownership never authorizes it. A present backend must
-/// lose/expire its lease and have process death confirmed before cleanup is polled.
-/// The gate remains held through cleanup, so a simultaneous Arm cannot race it.
-async fn clean_if_orphaned(
+/// Unknown ownership never authorizes a transition. Confirm death before revoking
+/// stale LAN exceptions. No path here removes protection, even without a backend.
+async fn retain_if_orphaned(
     bus: &zbus::Connection,
     gate: &Mutex<State>,
     status: &Status,
-    cleanup: impl std::future::Future<Output = io::Result<()>>,
+    retain: impl std::future::Future<Output = io::Result<()>>,
 ) -> io::Result<bool> {
     let mut gate = gate.lock().await;
     let owner = backend_owner(bus).await?;
@@ -201,33 +314,38 @@ async fn clean_if_orphaned(
         && (owner.as_deref() != Some(lease.owner.as_str()) || lease.expired())
     {
         status.set(Progress::Terminating);
-        // Keep the dead-process lease until cleanup succeeds. A replacement Arm
-        // remains refused while old resources/protection are being removed.
+        let held = gate.held;
+        // Keep the dead-process lease until restrictive retention succeeds.
+        // A replacement Arm cannot race revocation of old physical exceptions.
         lease
-            .stop_then(async {
-                status.set(Progress::Cleaning);
-                cleanup.await
-            })
+            .stop_then(async { if held { retain.await } else { Ok(()) } })
             .await?;
         gate.lease = None;
-        status.set(Progress::Cleaned);
-        return Ok(true);
+        gate.retained = gate.held;
+        status.set(if gate.held {
+            Progress::Blocked
+        } else {
+            Progress::Starting
+        });
+        return Ok(!gate.held);
     }
     if let Some(owner) = owner {
         // After helper restart, recover ownership without extending a prior lease
         // from a journal or trusting a requester-supplied numeric PID.
-        if gate.lease.is_none() {
+        if gate.held && gate.lease.is_none() {
             gate.lease = Some(watchdog::Lease::pin(bus, owner).await?);
             status.set(Progress::Watching);
         }
         return Ok(false);
     }
-    if status.get() == Progress::Cleaned {
-        return Ok(true);
+    if gate.held {
+        if !gate.retained {
+            retain.await?;
+            gate.retained = true;
+        }
+        status.set(Progress::Blocked);
+        return Ok(false);
     }
-    status.set(Progress::Cleaning);
-    cleanup.await?;
-    status.set(Progress::Cleaned);
     Ok(true)
 }
 
@@ -244,7 +362,12 @@ pub(crate) async fn run() -> io::Result<()> {
     let bus = zbus::Connection::system()
         .await
         .map_err(|_| unavailable())?;
-    let gate = Arc::new(Mutex::new(State::default()));
+    let held = crate::network::guard::guard_present().await?;
+    let gate = Arc::new(Mutex::new(State {
+        held,
+        generation: uuid::Uuid::new_v4(),
+        ..State::default()
+    }));
     let status = Status::default();
     bus.object_server()
         .at(
@@ -264,11 +387,11 @@ pub(crate) async fn run() -> io::Result<()> {
     let mut cleaned_at = None;
     loop {
         ticks.tick().await;
-        match clean_if_orphaned(
+        match retain_if_orphaned(
             &bus,
             &gate,
             &status,
-            crate::network::guard::clear_session_guards(),
+            crate::network::guard::retain_session_guard(),
         )
         .await
         {
@@ -305,22 +428,10 @@ pub(crate) async fn run() -> io::Result<()> {
     }
 }
 
-/// Bounded nft operations retry until cleanup is confirmed. Cancellation never
-/// declares success; loss of this backend's name transfers recovery to the helper.
-pub(crate) async fn clear_until_confirmed() -> io::Result<()> {
-    let mut ticks = tokio::time::interval(Duration::from_secs(1));
-    ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let mut reported = false;
-    loop {
-        ticks.tick().await;
-        if crate::network::guard::clear_session_guards().await.is_ok() {
-            return Ok(());
-        }
-        if !reported {
-            eprintln!("Automatic session cleanup pending; cleanup will retry.");
-            reported = true;
-        }
-    }
+/// Resource teardown does not authorize release. Ask the independent owner to
+/// retain blocking/revoke physical exceptions after confirmed local task shutdown.
+pub(crate) async fn retain(bus: &zbus::Connection) -> io::Result<()> {
+    renew(bus, true).await
 }
 
 #[cfg(test)]

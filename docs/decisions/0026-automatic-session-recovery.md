@@ -1,5 +1,9 @@
 # ADR 0026: Automatic recovery and return to ordinary networking
 
+Historical decision: terminal unblocking is superseded by
+[ADR 0034](0034-explicit-disconnect-protection.md). The descriptions and VM evidence
+below document the former v1 policy, not the current protection contract.
+
 Status: owner-approved behavior change; implemented experimentally, bounded legacy
 IPv4 VM crash/hang acceptance passed; broader packet/source-policy acceptance pending.
 Supersedes failure-retention/manual-recovery behavior in

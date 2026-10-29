@@ -1,8 +1,8 @@
-"""Verify, not alter, the disclosed catastrophic-failure cleanup policy."""
+"""Backend death must retain blocking until explicit scenario-owned Disconnect."""
 import signal
 
 from fixture import tcp_echo
-from support import LAB, active, assert_clean, guards_present, run, wait
+from support import LAB, active, assert_clean, guards_present, release_protection, run, wait
 
 
 class TerminalScenarios:
@@ -10,7 +10,7 @@ class TerminalScenarios:
         self.features = features
         self.suite = features.suite
 
-    def persistent_terminal_cleanup(self):
+    def persistent_terminal_retention(self):
         with self.features.profile("roaming"):
             backend, child = self.suite.pinned()
             try:
@@ -19,13 +19,23 @@ class TerminalScenarios:
                 if not active() or guards_present() != {"nm_tunnel", "nm_tunnel_fakeip"}:
                     raise RuntimeError("Ordinary network loss unexpectedly ended protection")
                 backend.send(signal.SIGKILL)
-                assert_clean([backend, child])
+                wait(lambda: backend.exited() and child.exited(), 45, "Failed backend and worker exit")
+                if guards_present() != {"nm_tunnel", "nm_tunnel_fakeip"}:
+                    raise RuntimeError("Backend death released protection")
             finally:
                 run("nmcli", "--wait", "20", "connection", "up", "id", "nmt-vm-uplink")
+            try:
+                tcp_echo(size=32)
+            except OSError:
+                pass
+            else:
+                raise RuntimeError("Ordinary traffic escaped without explicit Disconnect")
+            release_protection()
+            assert_clean([backend, child])
             tcp_echo()
             if active() or guards_present():
                 raise RuntimeError("Catastrophic cleanup was misreported as VPN recovery")
             (LAB / "terminal-policy-observation.log").write_text(
-                "Network loss retained protection; exact backend SIGKILL ended the NM lifetime.\n"
-                "Independent recovery removed the guards; ordinary unprotected IPv4 echo succeeded.\n"
-                "This is the existing terminal-cleanup policy, NOT until-Disconnect crash protection.\n")
+                "Network loss and backend SIGKILL retained protection.\n"
+                "Ordinary traffic was refused until explicit authorized Disconnect.\n"
+                "Post-Disconnect cleanup and ordinary IPv4 echo succeeded.\n")

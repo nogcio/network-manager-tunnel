@@ -255,16 +255,24 @@ pub async fn activate(profile: &SavedProfile) -> Result<(), ClientError> {
     .await
     .map_err(|_| ClientError::ControlTimeout)?
 }
-/// Explicitly deactivate only this observed active object. Never clears a firewall
-/// guard or chooses another VPN. Completion does not prove resource teardown.
+/// Explicitly deactivate this observed NM object, then release only the protection
+/// generation pinned before that mutation. The independent helper authenticates
+/// network-control permission and confirms process exit before guard removal.
+/// A failed/ambiguous NM mutation never requests release. No automatic retry.
 pub async fn deactivate(active: &ActiveConnection) -> Result<(), ClientError> {
+    let bus = Bus::system().await?;
+    let request = tokio::time::timeout(TIMEOUT, crate::protection::token(&bus.connection))
+        .await
+        .map_err(|_| ClientError::ControlTimeout)??;
     tokio::time::timeout(TIMEOUT, async {
-        Mutation::new(&Bus::system().await?)
-            .deactivate(active)
-            .await
+        Mutation::new(&bus).deactivate(active).await
     })
     .await
-    .map_err(|_| ClientError::ControlTimeout)?
+    .map_err(|_| ClientError::ControlTimeout)??;
+    if let Some(request) = request {
+        request.release().await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -1,5 +1,7 @@
 //! Unprivileged profile storage and explicit connection control through NetworkManager.
+mod protection;
 mod recovery;
+pub use protection::disconnect_protection;
 mod runtime;
 mod settings;
 mod telemetry;

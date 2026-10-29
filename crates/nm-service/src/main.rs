@@ -104,7 +104,7 @@ async fn main() {
     }
     .await;
     if result.is_err() {
-        eprintln!("VPN service failed; independent automatic guard recovery will continue.");
+        eprintln!("VPN service failed; independent protection remains until explicit Disconnect.");
         std::process::exit(1);
     }
 }

@@ -60,7 +60,7 @@ async fn incompatible_recovery_generation_refuses_before_arm()
 }
 
 #[tokio::test]
-async fn orphan_cleanup_is_gated_by_current_backend_ownership_and_never_activates_it()
+async fn orphan_retention_is_gated_by_ownership_and_release_requires_current_generation()
 -> Result<(), Box<dyn std::error::Error>> {
     tokio::time::timeout(Duration::from_secs(10), async {
         let mut daemon = tokio::process::Command::new("dbus-daemon")
@@ -75,33 +75,50 @@ async fn orphan_cleanup_is_gated_by_current_backend_ownership_and_never_activate
         let stranger = zbus::connection::Builder::address(address.trim())?.build().await?;
         let gate = Arc::new(Mutex::new(State::default()));
         let status = Status::default();
+        let recovery = Recovery { bus: service.clone(), gate: Arc::clone(&gate), status: status.clone() };
         service.object_server().at(PATH, Recovery { bus: service.clone(), gate: Arc::clone(&gate), status: status.clone() }).await?;
         service.request_name(NAME).await?;
-        let cleaned = std::cell::Cell::new(0);
-        assert!(clean_if_orphaned(&service, &gate, &status, async { cleaned.set(cleaned.get()+1); Ok(()) }).await?);
+        let retained = std::cell::Cell::new(0);
+        let cleared = std::cell::Cell::new(0);
+        assert!(retain_if_orphaned(&service, &gate, &status, async { retained.set(retained.get()+1); Ok(()) }).await?);
         backend.request_name(SERVICE_TYPE).await?;
-        assert!(!clean_if_orphaned(&service, &gate, &status, async { cleaned.set(cleaned.get()+1); Ok(()) }).await?);
-        assert_eq!(cleaned.get(), 1);
+        assert!(!retain_if_orphaned(&service, &gate, &status, async { retained.set(retained.get()+1); Ok(()) }).await?);
+        assert_eq!(retained.get(), 0);
         let invalid = zbus::Proxy::new(&stranger, NAME, PATH, INTERFACE).await?;
         let rejected: zbus::Result<()> = invalid.call("Arm", &()).await;
         assert!(matches!(rejected, Err(zbus::Error::MethodError(ref name,_,_)) if name.as_str() == "org.freedesktop.DBus.Error.AccessDenied"));
         let rejected: zbus::Result<()> = invalid.call("Renew", &(false,)).await;
         assert!(matches!(rejected, Err(zbus::Error::MethodError(ref name,_,_)) if name.as_str() == "org.freedesktop.DBus.Error.AccessDenied"));
         let valid = zbus::Proxy::new(&backend, NAME, PATH, INTERFACE).await?;
-        valid.call::<_,_,()>("Arm", &()).await?;
-        valid.call::<_,_,()>("Renew", &(true,)).await?;
+        recovery.adopt(backend.unique_name().ok_or("Backend owner")?.to_string(),false,true,async { retained.set(retained.get()+1); Ok(()) }).await?;
+        recovery.adopt(backend.unique_name().ok_or("Backend owner")?.to_string(),true,false,async { retained.set(retained.get()+1); Ok(()) }).await?;
         let progress: (u32, String) = invalid.call("GetStatus", &()).await?;
-        assert_eq!(progress, (1, "backend-cleanup".into()));
-        assert_eq!(cleaned.get(), 1);
+        assert_eq!(progress, (PROTOCOL, "blocked".into()));
+        assert_eq!(retained.get(), 2);
         // Simulate helper restart: the bus-pinned FD is dropped, never signalled.
         // Process termination/cleanup ordering is exercised on owned children in
         // watchdog's tests, not on this test process hosting both bus peers.
         gate.lock().await.lease = None;
         backend.release_name(SERVICE_TYPE).await?;
-        let refused = clean_if_orphaned(&service, &gate, &status, async { Err(io::Error::other("Synthetic transaction refusal.")) }).await;
+        gate.lock().await.retained = false;
+        let refused = retain_if_orphaned(&service, &gate, &status, async { Err(io::Error::other("Synthetic transaction refusal.")) }).await;
         assert!(refused.is_err());
-        assert!(clean_if_orphaned(&service, &gate, &status, async { cleaned.set(cleaned.get()+1); Ok(()) }).await?);
-        assert_eq!(cleaned.get(), 2);
+        assert!(!retain_if_orphaned(&service, &gate, &status, async { retained.set(retained.get()+1); Ok(()) }).await?);
+        assert_eq!(retained.get(), 3);
+        assert!(gate.lock().await.held);
+        // Repeated orphan observation never polls a clear operation or releases
+        // protection. Rejection of stale release leaves the latch unchanged.
+        let generation = gate.lock().await.generation.to_string();
+        assert!(recovery.release(&uuid::Uuid::new_v4().to_string(),async { cleared.set(cleared.get()+1); Ok(()) }).await.is_err());
+        assert_eq!(cleared.get(),0);
+        assert!(recovery.release(&generation,async { Err(io::Error::other("Synthetic clear refusal")) }).await.is_err());
+        assert!(gate.lock().await.held);
+        assert_eq!(gate.lock().await.generation.to_string(),generation);
+        recovery.release(&generation,async { cleared.set(cleared.get()+1); Ok(()) }).await?;
+        assert_eq!(cleared.get(),1);
+        assert!(!gate.lock().await.held);
+        assert!(recovery.release(&generation,async { cleared.set(cleared.get()+1); Ok(()) }).await.is_err());
+        assert_eq!(cleared.get(),1);
         gate.lock().await.shutting_down = true;
         backend.request_name(SERVICE_TYPE).await?;
         assert!(valid.call::<_,_,()>("Arm", &()).await.is_err(), "final Arm must not succeed after helper shutdown admission closes");
@@ -109,14 +126,14 @@ async fn orphan_cleanup_is_gated_by_current_backend_ownership_and_never_activate
         backend.release_name(SERVICE_TYPE).await?;
         daemon.kill().await?;
         daemon.wait().await?;
-        assert!(clean_if_orphaned(&service, &gate, &status, async { cleaned.set(cleaned.get()+1); Ok(()) }).await.is_err());
-        assert_eq!(cleaned.get(), 2, "unknown ownership must not run cleanup");
+        assert!(retain_if_orphaned(&service, &gate, &status, async { retained.set(retained.get()+1); Ok(()) }).await.is_err());
+        assert_eq!(retained.get(), 3, "unknown ownership must not run firewall mutations");
         Ok::<_,Box<dyn std::error::Error>>(())
     }).await?
 }
 
 #[tokio::test]
-async fn deployed_recovery_policy_exposes_status_without_granting_control()
+async fn deployed_recovery_policy_exposes_status_without_unauthorized_control()
 -> Result<(), Box<dyn std::error::Error>> {
     tokio::time::timeout(Duration::from_secs(10), async {
         let policy = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -146,7 +163,14 @@ async fn deployed_recovery_policy_exposes_status_without_granting_control()
         service.request_name(NAME).await?;
         let proxy = zbus::Proxy::new(&observer, NAME, PATH, INTERFACE).await?;
         let status: (u32, String) = proxy.call("GetStatus", &()).await?;
-        assert_eq!(status, (1, "starting".into()));
+        assert_eq!(status, (PROTOCOL, "starting".into()));
+        let token: (u32,String,bool) = proxy.call("GetReleaseToken", &()).await?;
+        assert_eq!(token.0,PROTOCOL);
+        assert!(!token.2);
+        // Bus policy permits this method, but absence/denial of Polkit still
+        // refuses it without terminating a process or touching nftables.
+        let refused:zbus::Result<()> = proxy.call("Disconnect",&(uuid::Uuid::new_v4().to_string(),)).await;
+        assert!(refused.is_err());
         if !rustix::process::geteuid().is_root() {
             let arm: zbus::Result<()> = proxy.call("Arm", &()).await;
             let renew: zbus::Result<()> = proxy.call("Renew", &(false,)).await;

@@ -3,14 +3,15 @@ import os
 import json
 from pathlib import Path
 import re
+import shlex
 import shutil
 import signal
 import socket
 import subprocess
 
-from fixture import IPV6, tcp_echo, udp_dns
+from fixture import ECHO, IPV6, tcp_echo, udp_dns
 from support import (LAB, NAME, PROFILE, Process, activate, active, assert_clean, bus,
-                     disconnect, guards_present, owner_pid, run, stop, wait, worker)
+                     disconnect, guards_present, owner_pid, release_protection, run, stop, wait, worker)
 
 class Suite:
     def __init__(self, peers):
@@ -146,21 +147,87 @@ class Suite:
 
     def worker_crash(self):
         activate()
-        _, child = self.pinned()
+        backend, child = self.pinned()
         child.send(signal.SIGKILL)
+        def recovered():
+            if not child.exited():
+                return False
+            if not active() or guards_present() != {"nm_tunnel"}:
+                raise RuntimeError("Worker recovery lost protected NM lifetime")
+            try:
+                current = worker(backend)
+            except RuntimeError:
+                return False
+            try:
+                tcp_echo(size=32)
+            except OSError:
+                current.close()
+                return False
+            self.handles.append(current)
+            return current.pid != child.pid
+        wait(recovered, 55, "Worker recovery without releasing protection")
+        if not active() or guards_present() != {"nm_tunnel"}:
+            raise RuntimeError("Worker failure released protection")
+        tcp_echo()
+        disconnect()
         assert_clean([child])
 
     def backend_crash(self):
         activate()
         backend, child = self.pinned()
         backend.send(signal.SIGKILL)
+        self.failed_transport_retains_protection(backend, child)
+        old_token = self.protection_token()
+        recovery = Process(owner_pid(NAME + ".Recovery"))
+        self.handles.append(recovery)
+        recovery.send(signal.SIGKILL)
+        wait(lambda: recovery.exited() and owner_pid(NAME + ".Recovery") not in [None, recovery.pid],
+             15, "Blocked-helper restart retains protection")
+        refused = run("busctl", "--system", "--auto-start=no", "call", NAME + ".Recovery",
+                      "/org/freedesktop/NetworkManager/tunnel/Recovery", NAME + ".Recovery",
+                      "Disconnect", "s", old_token, check=False)
+        if refused.returncode == 0 or guards_present() != {"nm_tunnel"}:
+            raise RuntimeError("A stale request released restarted-helper protection")
+        release_protection()
         assert_clean([backend, child])
 
     def backend_hang(self):
         activate()
         backend, child = self.pinned()
         backend.send(signal.SIGSTOP)
+        self.failed_transport_retains_protection(backend, child)
+        release_protection()
         assert_clean([backend, child])
+
+    def failed_transport_retains_protection(self, backend, child):
+        wait(lambda: backend.exited() and child.exited(), 45, "Independent failed-backend termination")
+        wait(lambda: not active() and not Path("/sys/class/net/nmtun0").exists(),
+             15, "NM has removed the failed transport before physical probes")
+        if guards_present() != {"nm_tunnel"}:
+            raise RuntimeError("Backend death released protection without Disconnect")
+        token = self.protection_token()
+        refused = run("setpriv", "--reuid=nm-tunnel", "--regid=nm-tunnel", "--clear-groups",
+                      "--no-new-privs", "--", "busctl", "--system", "--auto-start=no", "call",
+                      NAME + ".Recovery", "/org/freedesktop/NetworkManager/tunnel/Recovery",
+                      NAME + ".Recovery", "Disconnect", "s", token, check=False)
+        if refused.returncode == 0 or guards_present() != {"nm_tunnel"}:
+            raise RuntimeError("Unprivileged unauthorized release altered protection")
+        for address in [ECHO, IPV6]:
+            try:
+                tcp_echo(address, 32)
+            except OSError:
+                pass
+            else:
+                raise RuntimeError("Ordinary traffic escaped retained protection")
+
+    @staticmethod
+    def protection_token():
+        reply = shlex.split(run("busctl", "--system", "--auto-start=no", "call", NAME + ".Recovery",
+                                "/org/freedesktop/NetworkManager/tunnel/Recovery", NAME + ".Recovery",
+                                "GetReleaseToken").stdout)
+        if len(reply) != 4 or reply[:2] != ["usb", "2"] or reply[3] != "true":
+            raise RuntimeError("Missing v2 retained-protection token")
+        return reply[2]
 
     def recovery_restart(self):
         activate()

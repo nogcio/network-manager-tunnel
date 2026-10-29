@@ -37,26 +37,21 @@ legacy LAN bypass still precedes TCP sniffing, and legacy UDP does not gain QUIC
 hostname routing. Root independently checks every grant. These boundaries do not
 introduce a protocol plugin registry, new external dependency versions or expanded permissions.
 
-`guard_recovery.rs` is the independent systemd-owned orphan-cleanup owner. Its
-root-only Arm handshake must succeed before guard installation. Preparation retries
-the same input once after one second within one 45-second budget; cancellation
-stops retries. Disconnect or terminal failure stops owned resources and retries
-guard cleanup automatically. Fatal runtime failure ends the session, not a hidden
-NM reactivation. Ordinary networking then resumes without VPN. Backend process
-death transfers orphan cleanup to the independently restarted helper. This replaces
-retained-failure/manual recovery. Bounded synthetic IPv4 VM checks exercise
-TUN TCP/UDP/DNS, SIGKILL orphan cleanup, SIGSTOP watchdog cleanup and recovery-helper
-restart during traffic; broader failure races and coexistence remain pending.
-The helper also detects a lifecycle loop that stops renewing its 30-second lease,
-even if it retains its bus name. It pins the backend through D-Bus `ProcessFD`, sends
-terminal SIGKILL only through that handle and waits for confirmed process exit before
-cleanup. Missing ProcessFD support refuses arming; numeric-PID fallback is forbidden.
-Read-only `GetStatus` v1 remains available during termination/cleanup and is consumed
-by COSMIC without activating either service or gaining root control. Its last confirmed
-cleanup remains visible for 30 seconds after orphan cleanup. Signaling, system-bus
-activation/confinement and native packet ordering still require broader review and
-acceptance; the VM result does not timestamp every process/packet transition.
-See [ADR 0026](../../docs/decisions/0026-automatic-session-recovery.md).
+`guard_recovery.rs` independently retains protection after failure. Its v2 root-only
+Arm handshake establishes a restrictive baseline guard. Worker failure retries the
+same in-memory NM session without releasing guards; backend crash/hang revokes
+stale authority but cannot unblock ordinary traffic. The helper pins processes
+through D-Bus ProcessFD and confirms termination before any explicit guard removal.
+Missing ProcessFD support refuses arming; numeric-PID fallback is forbidden.
+
+Only explicit `Disconnect(generation)` can remove the owned guards. It checks the
+actual bus sender through Polkit's NM network-control permission, rejects stale
+helper/session generations, and confirms process death before the atomic clear.
+COSMIC supports that explicit action even after NM loses its active VPN object.
+Read-only status/token calls do not activate/control networking. The v1 helper is
+incompatible; do not live-upgrade a leased v1 instance. Historical VM evidence below
+predates this change and does not verify v2. See
+[ADR 0034](../../docs/decisions/0034-explicit-disconnect-protection.md).
 
 The maintained [offline VM suite](../../docs/testing/vm-acceptance.md) exercises
 real NM/TUN TCP/UDP/DNS, bounded physical packet isolation, clean/crash/watchdog
@@ -162,9 +157,10 @@ Best-effort private telemetry logs probe failure counts, recovery, numeric runti
 stage, elapsed milliseconds, bounded error class and broker-fatal status; no error
 strings, names or addresses are logged. These reports do not change the public
 telemetry schema: `running` still does not prove current reachability. A cancelled
-in-flight broker exchange remains poisoned and fatal; fatal worker/broker failures
-end the session with automatic cleanup. Retrying probes is not process-crash or
-uplink-change recovery. Disconnect cancels the worker and pending retries.
+in-flight broker exchange remains poisoned and fatal to that worker. The lifecycle
+revokes old capabilities and recovers the same admitted session without releasing
+protection. Backend failure leaves the independent protection latch held.
+Disconnect cancels the worker and pending retries and explicitly requests release.
 Fatal worker reports also include a fixed error class instead of discarding the
 error entirely; a runtime stage is not necessarily an activation/setup failure.
 Probing does not block TCP admission, UDP dispatch or flow reaping.
@@ -265,10 +261,9 @@ application reachability or current guard presence; use NM for connection state.
   dropped by the guard, even if another interface has a working IPv6 route.
 - The guard allows loopback, marked IPv4 upstream sockets and IPv4 TUN output;
   other output is dropped. It does not preserve SSH management traffic.
-- Disconnect and terminal failure automatically remove both session guards after
-  resource teardown. Cleanup errors retry; they are not reported as absent protection.
-  The independent helper handles orphan guards after supervisor death. Ordinary
-  networking returns without VPN; this is not permanent lockdown.
+- Only explicit authorized Disconnect removes both session guards after confirmed
+  backend termination. Terminal failure retains blocking in the independent helper;
+  failed release remains unconfirmed and is never retried automatically.
 - Compatibility `--clear-guard` remains an administrative tool, not a required
   user recovery step. Recovery is not owned by the GUI or package transactions.
 - D-Bus serialization and Rust strings can contain transient secret copies;

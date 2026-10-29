@@ -1,5 +1,15 @@
 # Offline NetworkManager VM acceptance
 
+Current source uses contract v7 and
+[explicit-Disconnect protection](../decisions/0034-explicit-disconnect-protection.md).
+Worker/backend failure and nonpersistent uplink loss must retain protection;
+terminal cases require explicit release before ordinary traffic. The prior v6
+35/40-case results below are historical automatic-unblocking evidence, not a v7
+pass. The revised `fail-closed` subset passed eight required cases, including denied
+release, stale-token refusal after blocked-helper restart and failed physical IPv4/
+IPv6 probes before explicit Disconnect. Evidence: `target/vm-acceptance/run-53qxbyfl/`.
+Other v7 scopes have not yet been rerun; never relabel old results.
+
 The maintained entry point is `scripts/check_vm.py`. This is explicit native
 integration testing, **not** part of `cargo xtask check`, a production installation
 tool, full native desktop acceptance, or a promise of complete VPN security. No
@@ -135,6 +145,11 @@ The `power-soak` and `desktop-soak` compositions isolate post-suspend workload
 behavior from desktop-process lifecycle effects without reordering or excluding
 cases from `full`. QEMU uses `-no-reboot`: an unexpected guest reset must fail
 promptly, not silently boot a new lifetime and wait until the overall deadline.
+
+`--suite fail-closed` selects eight required cases for the v2 helper transition:
+baseline/native packet paths, explicit Disconnect, worker/backend crash, backend
+hang, helper restart and persistent terminal retention. It uses no S3 or desktop
+candidate. It does not replace `full` or validate native authorization prompts.
 
 `--suite platform-power` is a diagnostic control, not a substitute for `power-soak`
 or `full`: it bypasses Tunnel installation and peer/network fixture setup, checks

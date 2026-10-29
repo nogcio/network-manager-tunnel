@@ -1,5 +1,5 @@
 """Versioned acceptance protocol shared by host and guest, without native imports."""
-VERSION = 6
+VERSION = 7
 # Bounded aggregate for required lifecycle plus source-routing packet captures.
 MAX_EVIDENCE_BYTES = 16 * 1024 * 1024
 MAX_PACKET_BYTES = 4 * 1024 * 1024
@@ -19,16 +19,19 @@ CORE_CASES = ("baseline-paths", "storage", "native-tcp-udp-dns", "physical-isola
          "vision-transport", "manual-dns", "dns-interception", "connected-lan",
          "private-lan", "combined-lan", "domain-rule-actions", "fakeip-persistence",
          "invalid-auth-flow-refusal", "tls-certificate-refusal", "websocket-certificate-refusal",
-         "source-dns-certificate-refusal", "active-profile-isolation", "uplink-loss-cleanup",
+          "source-dns-certificate-refusal", "active-profile-isolation", "uplink-loss-retention",
          "preparation-cancellation", "unprivileged-bus-boundary",
          "network-dns", "traffic-telemetry", "source-dns-routes", "readiness-no-destination-egress",
          "persistent-uplink-recovery", "persistent-source-recovery", "desktop-secret-agent")
 SUITES = {"core": CORE_CASES, "dhcp": ("dhcp-lease-recovery",), "power": ("suspend-resume",),
           "desktop": ("real-desktop-keyring",), "soak": ("steady-traffic",),
-          "terminal": ("persistent-terminal-cleanup",)}
+          "terminal": ("persistent-terminal-retention",)}
 CASES = CORE_CASES + SUITES["dhcp"] + SUITES["power"] + SUITES["desktop"] + SUITES["soak"] + SUITES["terminal"]
 SUITES["full"] = CASES
 SUITES["power-soak"] = SUITES["power"] + SUITES["soak"]
 SUITES["desktop-soak"] = SUITES["desktop"] + SUITES["soak"]
+SUITES["fail-closed"] = ("baseline-paths", "native-tcp-udp-dns", "clean-disconnect",
+                         "worker-crash", "backend-crash", "backend-hang",
+                         "recovery-restart", "persistent-terminal-retention")
 SUITES["platform-power"] = ("platform-s3-idle",)
 SUITES["platform-idle"] = ("platform-idle",)

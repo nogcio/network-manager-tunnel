@@ -12,6 +12,13 @@ pub(crate) async fn guard_present() -> io::Result<bool> {
     table_present("nm_tunnel").await
 }
 
+/// Retain session protection while revoking all physical LAN exceptions. Atomic
+/// replacement never exposes ordinary egress. No profile, resolver or journal I/O.
+pub(crate) async fn retain_session_guard() -> io::Result<()> {
+    let existing = guard_present().await?;
+    apply_guard_program(&guard_program(existing, "", false)).await
+}
+
 async fn table_present(table: &str) -> io::Result<bool> {
     let mut command = Command::new("/usr/sbin/nft");
     command.args(["-j", "list", "tables"]).kill_on_drop(true);
@@ -141,7 +148,7 @@ fn guard_program(existing: bool, lan_rule: &str, private_dns: bool) -> String {
 }
 
 /// Session-owned synthetic-range protection, removed with the main guard on
-/// disconnect or terminal cleanup. No persistence/boot enablement here.
+/// explicit Disconnect, never automatically on terminal failure. No boot enablement here.
 pub(crate) async fn ensure_fakeip_guard() -> io::Result<()> {
     let existing = table_present("nm_tunnel_fakeip").await?;
     apply_guard_program(&fakeip_guard_program(existing)).await
@@ -186,7 +193,8 @@ pub(crate) async fn clear_fakeip_guard() -> io::Result<()> {
 
 /// Remove both session tables in one nft transaction, after worker/relay teardown.
 /// A refused transaction leaves protection intact; no unrelated table is touched.
-/// Terminal cleanup and independent orphan recovery use this too. No journal is changed.
+/// Only the authorized release path and explicit root administrative override call
+/// this. Failure/orphan observation never authorizes it. No journal is changed.
 pub(crate) async fn clear_session_guards() -> io::Result<()> {
     let main = table_present("nm_tunnel").await?;
     let fakeip = table_present("nm_tunnel_fakeip").await?;

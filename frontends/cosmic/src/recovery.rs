@@ -39,7 +39,23 @@ impl Recovery {
             }
             RecoveryStatus::Retrying => Some(fl!("recovery-retrying")),
             RecoveryStatus::Cleaned => Some(fl!("recovery-cleaned")),
+            RecoveryStatus::Blocked => Some(fl!("recovery-blocked")),
         }
+    }
+
+    pub fn can_disconnect(&self) -> bool {
+        self.error.is_none()
+            && self
+                .received
+                .is_some_and(|time| time.elapsed() <= Duration::from_secs(3))
+            && matches!(
+                self.status,
+                Some(
+                    RecoveryStatus::Blocked
+                        | RecoveryStatus::Retrying
+                        | RecoveryStatus::Terminating
+                )
+            )
     }
 }
 
@@ -82,5 +98,11 @@ mod tests {
         );
         recovery.observe(Ok(None));
         assert!(recovery.hint().is_none());
+        recovery.observe(Ok(Some(RecoveryStatus::Blocked)));
+        assert!(recovery.can_disconnect());
+        recovery.received = Some(Instant::now() - Duration::from_secs(4));
+        assert!(!recovery.can_disconnect());
+        recovery.observe(Err(RecoveryError::Unavailable));
+        assert!(!recovery.can_disconnect());
     }
 }

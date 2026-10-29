@@ -85,6 +85,10 @@ async fn recovery_observation_never_activates_or_controls_and_rejects_owner_or_c
             assert_eq!(read(&observer).await, Err(RecoveryError::Invalid));
             assert_eq!(*data.lock().map_err(|_| "Feed lock failed")?, invalid);
         }
+        *data.lock().map_err(|_| "Feed lock failed")? = (2, "blocked".into());
+        assert_eq!(read(&observer).await?, Some(RecoveryStatus::Blocked));
+        *data.lock().map_err(|_| "Feed lock failed")? = (1, "blocked".into());
+        assert_eq!(read(&observer).await, Err(RecoveryError::Invalid));
         *data.lock().map_err(|_| "Feed lock failed")? = (1, "cleaned".into());
         service.object_server().remove::<Feed, _>(PATH).await?;
         service

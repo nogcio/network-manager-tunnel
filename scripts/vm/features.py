@@ -10,7 +10,7 @@ import signal
 from dnslib import DNSRecord
 
 from fixture import ECHO, tcp_echo, udp_dns
-from support import LAB, NAME, active, assert_clean, bus, guards_present, owner_pid, run, wait
+from support import LAB, NAME, active, assert_clean, bus, disconnect, guards_present, owner_pid, release_protection, run, wait
 
 
 def events():
@@ -91,13 +91,15 @@ class Features:
                 if rejects:
                     if result.returncode == 0:
                         raise RuntimeError("Rejected fixture activated: " + mode)
+                    release_protection()
                     assert_clean()
                 elif result.returncode != 0 or not active() or not guards_present():
                     raise RuntimeError("Fixture activation failed: " + mode + ": " + result.stderr)
             yield identifier
         finally:
             if active():
-                run("nmcli", "--wait", "25", "connection", "down", "uuid", identifier, timeout=30)
+                disconnect(identifier, "uuid")
+            release_protection()
             assert_clean()
             run("nmcli", "connection", "delete", "uuid", identifier)
 
@@ -197,11 +199,10 @@ class Features:
                     raise RuntimeError("Unknown FakeIP reached an outbound")
                 if iteration == 0:
                     backend, child = self.suite.pinned()
-                    run("nmcli", "--wait", "25", "connection", "down", "uuid", identifier, timeout=30)
+                    disconnect(identifier, "uuid")
                     assert_clean([child])
                     # Retire the confirmed-idle parent, so identity reuse depends
                     # on durable journal reopen, not an in-memory allocation.
-                    backend.send(signal.SIGTERM)
                     wait(backend.exited, 10, "Idle FakeIP parent exit")
                     wait(lambda: bus("NameHasOwner") == "b false", 10, "FakeIP parent bus release")
                     def recovered():
@@ -249,18 +250,28 @@ class Features:
         with self.profile("ws-untrusted", rejects=True):
             pass
 
-    def uplink_loss_cleanup(self):
+    def uplink_loss_retention(self):
         with self.profile("intercept"):
             _, child = self.suite.pinned()
             run("nmcli", "--wait", "20", "connection", "down", "id", "nmt-vm-uplink", timeout=25)
             try:
-                assert_clean([child])
+                wait(lambda: child.exited() and not active(), 55, "Nonpersistent NM uplink loss")
+                if guards_present() != {"nm_tunnel"}:
+                    raise RuntimeError("Automatic NM deactivation released protection")
             finally:
                 run("nmcli", "--wait", "20", "connection", "up", "id", "nmt-vm-uplink", timeout=25)
             # Restoration of the base network is not authorization to reconnect
             # the VPN. A new explicit NM activation remains the control owner.
-            if active() or guards_present():
+            if active() or guards_present() != {"nm_tunnel"}:
                 raise RuntimeError("Base restoration automatically reactivated the VPN")
+            try:
+                tcp_echo(size=32)
+            except OSError:
+                pass
+            else:
+                raise RuntimeError("Base restoration bypassed retained protection")
+            release_protection()
+            assert_clean([child])
             tcp_echo()
 
     def preparation_cancellation(self):
@@ -280,7 +291,7 @@ class Features:
                 observed = run("nmcli", "-t", "-f", "TYPE,STATE", "connection", "show", "--active").stdout
                 if "vpn:activating" not in observed.splitlines():
                     raise RuntimeError("Cancellation did not target pending preparation")
-                run("nmcli", "--wait", "25", "connection", "down", "uuid", identifier, timeout=30)
+                disconnect(identifier, "uuid")
                 assert_clean([child])
             finally:
                 if self.peers.proxy.poll() is None:

@@ -21,6 +21,8 @@ pub enum RecoveryStatus {
     Cleaned,
     /// The live backend reports that its own cleanup is pending.
     BackendCleanup,
+    /// VPN transport is unavailable; protection is retained until explicit Disconnect.
+    Blocked,
 }
 
 /// Sanitized observation error. Does not authorize retrying any NM write.
@@ -76,7 +78,7 @@ async fn read(bus: &zbus::Connection) -> Result<Option<RecoveryStatus>, Recovery
             _ => RecoveryError::Unavailable,
         })?
         .ok_or(RecoveryError::Unavailable)?;
-    if version != 1 {
+    if !matches!(version, 1 | 2) {
         return Err(RecoveryError::Invalid);
     }
     let status = match status.as_str() {
@@ -87,6 +89,7 @@ async fn read(bus: &zbus::Connection) -> Result<Option<RecoveryStatus>, Recovery
         "retrying" => RecoveryStatus::Retrying,
         "cleaned" => RecoveryStatus::Cleaned,
         "backend-cleanup" => RecoveryStatus::BackendCleanup,
+        "blocked" if version == 2 => RecoveryStatus::Blocked,
         _ => return Err(RecoveryError::Invalid),
     };
     owner

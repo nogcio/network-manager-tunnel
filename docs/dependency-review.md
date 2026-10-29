@@ -1,5 +1,19 @@
 # Dependency status and license evidence
 
+## Explicit protection release: system Polkit
+
+The recovery helper's explicit Disconnect requires the existing NetworkManager
+`org.freedesktop.NetworkManager.network-control` Polkit permission. The Arch recipe
+therefore declares `polkit` as a runtime dependency instead of relying on NM's
+optional dependency. Reviewed local package: polkit 128-1, upstream
+<https://github.com/polkit-org/polkit>, LGPL-2.0-or-later, about 2 MiB installed.
+It is a separately managed system service, not bundled Rust/native code. The
+maintained authorization boundary resolves a `system-bus-name` subject; there is no
+application-owned password store or caller-supplied numeric PID. No new Rust crate,
+feature or lockfile edge is introduced: existing locked zbus handles the D-Bus call.
+Polkit absence/refusal fails closed; native prompt acceptance and independent
+security review remain required.
+
 The standard audit, `cargo deny --locked check --warn unmaintained`, passes with
 maintenance and duplicate-version warnings. Re-run it against Cargo.lock for
 authoritative diagnostics; generated output belongs under `target/`.

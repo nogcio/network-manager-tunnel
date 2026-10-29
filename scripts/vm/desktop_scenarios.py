@@ -212,7 +212,8 @@ class DesktopScenarios:
                 desktop.start_agent()
                 run("nmcli", "--wait", "55", "connection", "up", "uuid", identifier, timeout=60)
                 tcp_echo()
-                run("nmcli", "--wait", "25", "connection", "down", "uuid", identifier, timeout=30)
+                from support import disconnect
+                disconnect(identifier, "uuid")
                 assert_clean()
                 with observation.open("a") as log:
                     log.write("Non-NM Get/Save/Delete/Cancel calls refused without mutation; encrypted keyring; process reopen; real TUN echo.\n"

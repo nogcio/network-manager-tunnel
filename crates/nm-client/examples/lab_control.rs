@@ -31,6 +31,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args == ["storage"] {
         return storage_contract().await;
     }
+    if args == ["release-protection"] {
+        nm_tunnel_client::disconnect_protection().await?;
+        println!("PASS: explicit authorized protection release confirmed.");
+        return Ok(());
+    }
     if args == ["inspect"] {
         let observed = snapshot().await?;
         println!(

@@ -61,7 +61,8 @@ the current source UI; an older installed package may have different controls.
    synthetic A addresses with empty AAAA replies. Turn FakeIP off before disabling
    the interception opt-in. Required source modes, when admitted, are not disabled
    by these optional switches. Protection is installed automatically and removed
-   on disconnect or terminal failure. Ordinary networking then resumes without VPN.
+   only on explicit Disconnect, not terminal failure. Current source requires the
+   v2 helper; older installed versions can still unblock automatically.
    No boot enablement is required.
    Cached FakeIP addresses are not protected outside VPN or after reboot;
    applications may need to retry. See [ADR 0022](decisions/0022-session-scoped-guards.md).
@@ -110,9 +111,11 @@ or during endpoint health checks. Configured endpoint hostname bootstrap, explic
 subscription requests and actual application/DNS traffic still use the network.
 
 Press **Disconnect** for the single observed connection. NM performs teardown;
-the backend closes its worker/TUN and removes its guard on clean disconnection.
-The GUI observes NM state, not private firewall state, so it does not certify
-completed cleanup from a method reply. To switch nodes, disconnect explicitly,
+the client then requests authorized release of the previously pinned protection
+generation. The independent helper confirms process exit and clears only its owned
+guards. A reply does not certify that NM has removed every route. If a crash removed
+the active VPN, the blocked-protection notice retains Disconnect. To switch nodes,
+disconnect explicitly,
 then use another saved profile's Connect action. There is no automatic switching,
 startup activation, subscription refresh or reconnection loop in the GUI.
 
@@ -206,21 +209,23 @@ The frontend never retries ambiguous NM writes/control requests. Unknown/unavail
 is shown as such, not as Disconnected or Connected. An accepted activation that
 vanishes is reported as failed, not as a successful VPN recovery.
 
-The backend retries initial preparation once within a bounded deadline. Transient
-runtime health failures retain the session while probing; fatal failure ends it.
-Resources and guards are then cleaned automatically, including by an independent
-systemd helper after a backend crash. Ordinary traffic can resume **without VPN**.
-If the backend hangs while retaining its bus name, the independent helper expires
-its liveness lease, stops that exact process and confirms its exit before cleanup.
-The connection summary separately shows observed cleanup/termination/retry progress.
-Missing or stale helper status does not prove cleanup; confirmed guard cleanup is
-not VPN readiness or a guarantee that NM has already removed its routes.
-This is not permanent lockdown or automatic reactivation of another profile.
-No manual guard command is required in the normal recovery contract. NM method
-completion does not prove cleanup has finished; errors retry instead of being
-reported as success. Synthetic legacy IPv4 VM crash/hang cleanup passed; broader
-packet/source-policy and helper-restart acceptance remain pending; see
-[ADR 0026](decisions/0026-automatic-session-recovery.md).
+The backend retries initial preparation within a bounded deadline. Worker failures
+recover the same admitted session; backend crash/hang can end VPN transport but
+must retain protection. The independent helper stops a failed pinned process and
+keeps ordinary network access blocked until **Disconnect** is explicitly pressed.
+There is no overall timer that silently returns to unprotected Internet access.
+
+If NM has already removed the active VPN, reopen COSMIC and use its remaining
+Disconnect action on the blocked-protection notice. It uses the normal system
+network-control authorization; a desktop prompt may be required. Other applets'
+NM-only Disconnect can stop VPN transport without releasing this latch. Closing
+the application does not release it. Missing/stale status cannot certify cleanup.
+An authorization/teardown failure remains a failure, not an automatic release retry.
+
+This is current-boot protection, not reboot persistence or automatic activation of
+another profile. The older VM crash/hang result verified automatic unblocking and
+does not certify this changed policy. The v1-to-v2 helper update is incompatible;
+see [ADR 0034](decisions/0034-explicit-disconnect-protection.md).
 
 ## Current limits
 

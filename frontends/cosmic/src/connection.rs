@@ -48,9 +48,9 @@ impl App {
         if let Some(preview) = &self.preview {
             return !self.operations.busy() && preview.disconnect_enabled();
         }
-        !self.operations.busy() && self.snapshot.as_ref().is_some_and(|s| {
+        !self.operations.busy() && (self.snapshot.as_ref().is_some_and(|s| {
             matches!(s.active.as_slice(), [active] if active.state() != ConnectionState::Disconnecting)
-        })
+        }) || (self.active_count() == 0 && self.recovery.can_disconnect()))
     }
     pub(super) fn active_count(&self) -> usize {
         #[cfg(all(feature = "preview", debug_assertions))]
@@ -219,6 +219,16 @@ impl App {
                     }
                     return cosmic::task::future(async move {
                         Message::Controlled(nm_tunnel_client::deactivate(&active).await)
+                    });
+                } else if self.recovery.can_disconnect() {
+                    if !self.begin_control(
+                        Intent::Disconnect(":protection".into()),
+                        &crate::i18n::fl!("requesting-nm-disconnection"),
+                    ) {
+                        return Task::none();
+                    }
+                    return cosmic::task::future(async move {
+                        Message::Controlled(nm_tunnel_client::disconnect_protection().await)
                     });
                 }
             }

@@ -84,14 +84,11 @@ support is not a guarantee of compatibility with every server.
   [ADR 0017](docs/decisions/0017-ipv4-only-first-version.md).
 - Broader REALITY interoperability and long-running reliability remain unverified.
   Local runtime checks do not establish production security or interoperability.
-- Terminal failure ends the VPN session and automatically removes its guards,
-  restoring ordinary networking **without VPN**. Independent systemd-owned orphan
-  recovery, a process-pinned liveness watchdog and independent UI progress are
-  implemented. D-Bus ProcessFD support is required. The offline VM suite exercises
-  real TUN TCP/UDP/DNS, physical isolation, crash/hang cleanup, recovery-helper
-  restart and active-image replacement; broader coexistence and failure coverage
-  remains pending; see
-  [the recovery contract](docs/decisions/0026-automatic-session-recovery.md).
+- Current source retains protection after terminal failure until explicit
+  **Disconnect**, including backend crash/hang. Independent recovery/watchdog
+  ownership uses D-Bus ProcessFD. The new v2 helper requires an incompatible-update
+  transition and fresh VM acceptance; do not mix it with the old automatic-unblocking
+  helper. See [the protection contract][protection-contract].
 - Saved edits and explicitly mapped source updates require NM 1.44+ and keep the
   running VPN unchanged. Inactive save/edit/update/delete passed a bounded real-NM
   VM check; offline active-session edits preserve the running processes and DNS.
@@ -120,7 +117,7 @@ support is not a guarantee of compatibility with every server.
   and privileged DNS security review remain unfinished; experimental local
   installation is not production certification.
   VPN/FakeIP protection is automatic during the session and removed on clean
-  disconnect or terminal failure. No boot guard enablement is required. Cached
+  explicit Disconnect, not terminal failure. No boot guard enablement is required. Cached
   FakeIP destinations are not protected outside the session or after reboot; see
   [ADR 0022](docs/decisions/0022-session-scoped-guards.md).
 - Native keyboard, screen-reader and Polkit acceptance is incomplete. The pinned
@@ -183,8 +180,10 @@ patch candidates: real DHCP, guest S3/resume, keyring persistence, ten-minute
 post-resume TCP/UDP traffic, flow draining and terminal cleanup. The installed
 QEMU still reproduces an ICH9 watchdog reset after S3; the packaged COSMIC applet
 still lacks VPN secret persistence. Neither candidate is installed on the host.
-Catastrophic backend death still removes protection and returns ordinary networking
-without VPN, even during recovery wait. These results are not a capacity benchmark
+Current source retains protection after worker/backend failure until explicit
+Disconnect under [ADR 0034](docs/decisions/0034-explicit-disconnect-protection.md).
+The preceding VM result verified the older automatic-unblocking policy, not this
+new contract. These results are not a capacity benchmark
 or full product acceptance. Positive certificate-trusted
 TLS/WebSocket/DoT/DoH fixtures, reboot, multi-hour load and full native desktop
 acceptance remain incomplete.
@@ -196,6 +195,8 @@ acceptance remain incomplete.
 - [Full documentation map](docs/README.md)
 
 ## License
+
+[protection-contract]: docs/decisions/0034-explicit-disconnect-protection.md
 
 Workspace code, documentation and original icons: MIT OR Apache-2.0. Adapted Kedra material retains
 its attribution; dependency licenses must be reviewed before adoption/distribution.

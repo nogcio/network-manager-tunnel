@@ -10,7 +10,7 @@ pub(crate) mod uplink_dns;
 pub(crate) use roaming::{changed, resume};
 pub(crate) use session::Session;
 
-/// Only an activation failure with confirmed teardown permits guard cleanup.
+/// Confirmed teardown permits retry/resource release, never automatic guard removal.
 #[derive(Debug)]
 pub(crate) enum Failure {
     Activation(std::io::Error),

@@ -117,8 +117,15 @@ def activate():
         raise RuntimeError("NM activation or legacy session guard missing")
 
 
-def disconnect():
-    run("nmcli", "--wait", "25", "connection", "down", "id", PROFILE, timeout=30)
+def release_protection():
+    # Explicit scenario-owned Disconnect, never a production automatic recovery.
+    if guards_present():
+        run(str(LAB / "lab_control"), "release-protection", timeout=155)
+
+
+def disconnect(identifier=PROFILE, selector="id"):
+    run("nmcli", "--wait", "25", "connection", "down", selector, identifier, timeout=30)
+    release_protection()
 
 
 def stop(process):

@@ -42,6 +42,13 @@ manager or always-on daemon, and is not enabled by package installation.
 
 ## Update, remove and recover
 
+The transition to [explicit-Disconnect protection][strict-protection] is
+**incompatible** with the old automatic-unblocking helper ABI v1. Before installing
+v2, explicitly disconnect the old VPN and confirm both old backend/helper processes
+have retired. Do not replace/restart a leased helper under a live VPN. New code
+refuses a v1 helper before arming; old running code cannot be made fail-closed by
+replacing files. This transition needs separate owner approval.
+
 For compatible upgrades from a version implementing
 [ADR 0030](decisions/0030-session-preserving-package-updates.md), install the rebuilt
 package normally: registration updates automatically, while an active session
@@ -57,10 +64,12 @@ Use normal AUR rebuilds for updates and `sudo pacman -R network-manager-tunnel-g
 for removal. Existing NM profiles and the worker account are preserved; manage
 unwanted profiles through NM. No installer owns a second profile database.
 
-Terminal failure ends the VPN session and automatically restores ordinary networking
-without VPN. The backend retries cleanup; an independent systemd-owned helper removes
-orphan guards if the backend crashes. No terminal command or privileged GUI is part
-of normal recovery. Package transactions do not themselves alter firewall rules.
+Terminal failure now retains blocking until explicit Disconnect. The independent
+helper revokes stale physical exceptions after backend death but does not remove
+protection. COSMIC exposes explicit release even when NM has lost its active VPN
+object, with the normal Polkit network-control check. An NM-only disconnect from
+another applet can leave the latch held; use COSMIC Disconnect to release it.
+Package transactions do not themselves alter firewall rules.
 Keep both executables/unit files available until disconnect and cleanup complete.
 Synthetic legacy IPv4 VM checks passed actual TUN TCP echo, clean disconnect,
 backend SIGKILL cleanup and SIGSTOP watchdog cleanup. Broader packet/source-policy
@@ -69,7 +78,7 @@ coverage and helper-restart races remain pending; see
 
 Persistent IPv4 FakeIP retains a root-owned XDG identity journal, but protection
 is now session-scoped. Activation automatically installs both required guards;
-disconnect or terminal failure removes both in one transaction. The compatibility
+only explicit Disconnect removes both in one transaction. The compatibility
 `--clear-guard` and narrower `--clear-fakeip-guard` remain administrative tools,
 not required user recovery steps. Neither command deletes identities. Never reset,
 edit or roll back the
@@ -115,3 +124,5 @@ covered-source instructions. Review the actual package outputs before distributi
 see [dependency review](dependency-review.md).
 The runtime remains experimental: real desktop/Polkit acceptance, long-running
 reliability and live REALITY compatibility are not established by package creation.
+
+[strict-protection]: decisions/0034-explicit-disconnect-protection.md

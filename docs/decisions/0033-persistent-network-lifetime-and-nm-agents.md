@@ -1,5 +1,9 @@
 # ADR 0033: Persistent network lifetime and standard NM credential agents
 
+The catastrophic-failure unblocking exception below is superseded by
+[ADR 0034](0034-explicit-disconnect-protection.md). Physical-network persistence and
+credential ownership remain unchanged; v6 VM evidence is historical.
+
 Status: owner-approved network-loss policy; experimental implementation with bounded
 offline NM acceptance. Real desktop/network acceptance remains incomplete. No host
 installation or existing-profile migration implied.

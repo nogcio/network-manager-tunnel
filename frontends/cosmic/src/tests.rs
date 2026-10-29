@@ -7,6 +7,30 @@ use nm_tunnel_subscription::{SubscriptionError, parse_subscription};
 const LIST: &str = "vless://12345678-1234-4234-8234-123456789abc@proxy.example:443?security=tls&sni=www.example.com#Imported\ntrojan://secret@proxy.example:443#Not%20supported";
 
 #[test]
+fn retained_protection_disconnect_stays_available_without_nm_and_requires_an_explicit_click() {
+    let (mut app, _) = App::init(Core::default(), Flags::default());
+    app.snapshot = None;
+    app.recovery
+        .observe(Ok(Some(nm_tunnel_client::RecoveryStatus::Blocked)));
+    assert!(app.can_disconnect());
+    assert!(
+        !app.operations.busy(),
+        "observation must not release protection"
+    );
+    let _ = app.update(Message::Disconnect); // Future is not polled: no host I/O.
+    assert!(app.operations.busy());
+    assert!(
+        matches!(app.operations.control(),Some(super::connection::Intent::Disconnect(id)) if id == ":protection")
+    );
+    app.recovery
+        .observe(Ok(Some(nm_tunnel_client::RecoveryStatus::Cleaned)));
+    assert!(
+        app.operations.busy(),
+        "read-only cleanup observation cannot complete the dispatched request"
+    );
+}
+
+#[test]
 fn installed_package_notice_never_overwrites_errors_or_dispatches_vpn_control() {
     let (mut app, _) = App::init(Core::default(), Flags::default());
     app.package_update.changed = true;

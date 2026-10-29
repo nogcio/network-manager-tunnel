@@ -3,7 +3,7 @@ from pathlib import Path
 import json
 from features import events, query
 from fixture import tcp_echo
-from support import LAB, active, assert_clean, guards_present, run, wait
+from support import LAB, active, assert_clean, disconnect, guards_present, run, wait
 
 
 class RoamingScenarios:
@@ -93,7 +93,7 @@ class RoamingScenarios:
                 wait(recovered_worker.exited, 15, "Second outage entered protected recovery")
                 if not active() or guards_present() != {"nm_tunnel", "nm_tunnel_fakeip"}:
                     raise RuntimeError("Waiting for explicit Disconnect released protection")
-                run("nmcli", "--wait", "25", "connection", "down", "id", "NMT VM " + mode)
+                disconnect("NMT VM " + mode)
                 assert_clean()
             finally:
                 run("nmcli", "connection", "delete", "id", "nmt-vm-roaming-uplink", check=False)

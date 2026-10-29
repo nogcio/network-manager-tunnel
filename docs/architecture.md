@@ -330,11 +330,10 @@ backends reject it. See [the DNS contract][source-dns-selection].
    Design readiness around VLESS's limited authentication acknowledgement semantics;
    opening a TCP socket alone cannot prove the VPN is usable.
 5. On cancellation/failure, stop tasks, close sockets/TUN and report state to NM.
-   Teardown is idempotent and automatic, including terminal failures; ordinary
-   networking resumes without VPN after terminal cleanup. Persistent network loss
-   instead retains its admitted guards/TUN until recovery or explicit Disconnect.
-   An independent recovery owner must be armed
-   before guard changes so backend death does not orphan cleanup.
+   Resource teardown is idempotent; failure never authorizes guard removal.
+   Persistent network loss retains its admitted guards/TUN until recovery or
+   explicit Disconnect. An independent owner must be armed before guard changes;
+   backend death retains protection until an authorized explicit release.
 
 The experimental [service contract](../crates/nm-service/README.md) implements root
 setup/socket brokering, authenticated NM callers and an unprivileged worker.
@@ -347,8 +346,12 @@ IPv6 must be supported or explicitly prevented from bypassing the tunnel. DNS le
 policy, UDP/XUDP compatibility and kill-switch behavior need distinct acceptance
 tests. A default VPN route is not a kill switch. The experimental output guard
 drops unmarked physical IPv4 and non-loopback IPv6 during the session/recovery attempt.
-Terminal failure ends the session and automatically restores ordinary networking;
-this is not permanent lockdown. It also blocks
+Terminal failure does not restore ordinary networking. The v2 independent helper
+retains blocking until explicit Disconnect, including when NM has lost its active
+object; COSMIC keeps Disconnect available on a fresh blocked helper observation.
+Release checks Polkit network-control, pins the helper generation, confirms backend
+exit and clears only owned tables. See
+[ADR 0034](decisions/0034-explicit-disconnect-protection.md). It also blocks
 forwarding from our TUN. Root-owned endpoint/Direct payload relay
 authority and remaining acceptance are in [ADR 0015](decisions/0015-root-owned-endpoint-relays.md).
 

@@ -241,7 +241,7 @@ pub(crate) async fn run(
                 plugin::change(&bus, &state, 3).await?;
                 failed = false;
                 telemetry.begin();
-                intent = config.persistent.then(|| config.clone());
+                intent = Some(config.clone());
                 pending = Some(launch(&bus, config, &telemetry));
                 // Admission transfers ownership to this loop even if the caller disappears.
                 let _ = reply.send(Ok(()));
@@ -291,7 +291,7 @@ pub(crate) async fn run(
                 match completed {
                     Ok(config) => {
                         authentication = None;
-                        intent = config.persistent.then(|| config.clone());
+                        intent = Some(config.clone());
                         pending = Some(launch(&bus, config, &telemetry));
                         let _ = reply.send(Ok(()));
                     }
@@ -336,11 +336,12 @@ pub(crate) async fn run(
                         telemetry.state("stopping");
                         Plugin::failure(&SignalEmitter::new(&bus, PATH)?, 1).await?;
                         plugin::change(&bus, &state, 5).await?;
-                        cleanup = Some(AbortTask(tokio::spawn(
-                            guard_recovery::clear_until_confirmed(),
-                        )));
+                        let owner = bus.clone();
+                        cleanup = Some(AbortTask(tokio::spawn(async move {
+                            guard_recovery::retain(&owner).await
+                        })));
                         eprintln!(
-                            "VPN activation failed (kind {:?}, OS error {:?}); automatic cleanup started.",
+                            "VPN activation failed (kind {:?}, OS error {:?}); protection retained until explicit Disconnect.",
                             error.kind(),
                             error.raw_os_error()
                         );
@@ -348,18 +349,27 @@ pub(crate) async fn run(
                 }
             }
             Event::Worker => {
-                intent = None;
-                failed = true;
-                telemetry.state("stopping");
-                if let Some(active) = session.take() {
-                    active.stop().await.map_err(shutdown_failure)?;
-                }
-                Plugin::failure(&SignalEmitter::new(&bus, PATH)?, 1).await?;
-                plugin::change(&bus, &state, 5).await?;
-                cleanup = Some(AbortTask(tokio::spawn(
-                    guard_recovery::clear_until_confirmed(),
-                )));
-                eprintln!("VPN worker stopped unexpectedly; automatic cleanup started.");
+                let active = session
+                    .take()
+                    .ok_or_else(|| zbus::Error::Failure("Session ownership unavailable.".into()))?;
+                let config = intent
+                    .clone()
+                    .ok_or_else(|| zbus::Error::Failure("Session intent unavailable.".into()))?;
+                let (cancel, cancelled) = oneshot::channel();
+                pending = Some(Preparation {
+                    cancel,
+                    task: AbortTask(tokio::spawn(supervisor::resume(
+                        bus.clone(),
+                        active,
+                        config,
+                        telemetry.clone(),
+                        cancelled,
+                    ))),
+                });
+                telemetry.state("connecting");
+                eprintln!(
+                    "VPN worker stopped unexpectedly; recovering with protection retained until explicit Disconnect."
+                );
             }
             Event::Request(Some(Request::Stop)) => {
                 authentication = None;
@@ -371,9 +381,10 @@ pub(crate) async fn run(
                     active.stop().await.map_err(shutdown_failure)?;
                 }
                 if cleanup.is_none() {
-                    cleanup = Some(AbortTask(tokio::spawn(
-                        guard_recovery::clear_until_confirmed(),
-                    )));
+                    let owner = bus.clone();
+                    cleanup = Some(AbortTask(tokio::spawn(async move {
+                        guard_recovery::retain(&owner).await
+                    })));
                 }
             }
             Event::Cleaned(result) => {
@@ -401,15 +412,9 @@ pub(crate) async fn run(
                     task.0.abort();
                     let _ = (&mut task.0).await;
                 }
-                return match crate::network::guard::clear_session_guards().await {
-                    Ok(()) => {
-                        telemetry.state("stopped");
-                        Ok(())
-                    }
-                    Err(_) => Err(zbus::Error::Failure(
-                        "Shutdown cleanup transferred to automatic recovery.".into(),
-                    )),
-                };
+                // Shutdown/NM loss is not user authorization to release guards.
+                // The independent owner revokes stale exceptions after our exit.
+                return Ok(());
             }
         }
     }

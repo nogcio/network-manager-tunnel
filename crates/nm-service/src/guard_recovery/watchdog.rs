@@ -55,7 +55,11 @@ impl Lease {
         if super::backend_owner(bus).await?.as_deref() != Some(owner.as_str()) {
             return Err(super::unavailable());
         }
-        Self::new(owner, process)
+        let lease = Self::new(owner, process)?;
+        if futures_util::poll!(lease.process.readable()).is_ready() {
+            return Err(super::unavailable());
+        }
+        Ok(lease)
     }
 
     pub fn expired(&self) -> bool {
@@ -71,8 +75,8 @@ impl Lease {
         Ok(())
     }
 
-    /// Terminal failure ends session protection. Wait for process death before
-    /// allowing cleanup; failed signaling/readiness never grants permission to clear.
+    /// Wait for process death before a permitted continuation. Termination alone
+    /// never authorizes guard removal; failed signaling/readiness fails closed.
     pub async fn terminate(&self) -> io::Result<()> {
         match rustix::process::pidfd_send_signal(
             self.process.get_ref(),
