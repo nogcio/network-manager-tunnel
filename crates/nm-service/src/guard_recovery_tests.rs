@@ -2,6 +2,64 @@ use super::*;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[tokio::test]
+async fn incompatible_recovery_generation_refuses_before_arm()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+    struct Stub {
+        version: Arc<AtomicU32>,
+        arms: Arc<AtomicUsize>,
+    }
+    #[zbus::interface(name = "org.freedesktop.NetworkManager.tunnel.Recovery")]
+    impl Stub {
+        fn get_status(&self) -> (u32, String) {
+            (self.version.load(Ordering::SeqCst), "starting".into())
+        }
+        fn arm(&self) {
+            self.arms.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let mut daemon = tokio::process::Command::new("dbus-daemon")
+            .args(["--session", "--nofork", "--print-address=1"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()?;
+        let mut output = BufReader::new(daemon.stdout.take().ok_or("Missing bus output")?);
+        let mut address = String::new();
+        output.read_line(&mut address).await?;
+        let service = zbus::connection::Builder::address(address.trim())?
+            .build()
+            .await?;
+        let client = zbus::connection::Builder::address(address.trim())?
+            .build()
+            .await?;
+        let version = Arc::new(AtomicU32::new(PROTOCOL + 1));
+        let arms = Arc::new(AtomicUsize::new(0));
+        service
+            .object_server()
+            .at(
+                PATH,
+                Stub {
+                    version: Arc::clone(&version),
+                    arms: Arc::clone(&arms),
+                },
+            )
+            .await?;
+        service.request_name(NAME).await?;
+        assert!(arm(&client).await.is_err());
+        assert_eq!(arms.load(Ordering::SeqCst), 0);
+        version.store(PROTOCOL, Ordering::SeqCst);
+        arm(&client).await?;
+        assert_eq!(arms.load(Ordering::SeqCst), 1);
+        daemon.kill().await?;
+        daemon.wait().await?;
+        Ok::<_, Box<dyn std::error::Error>>(())
+    })
+    .await?
+}
+
+#[tokio::test]
 async fn orphan_cleanup_is_gated_by_current_backend_ownership_and_never_activates_it()
 -> Result<(), Box<dyn std::error::Error>> {
     tokio::time::timeout(Duration::from_secs(10), async {

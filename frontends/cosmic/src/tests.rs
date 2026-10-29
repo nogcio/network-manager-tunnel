@@ -6,6 +6,24 @@ use nm_tunnel_subscription::{SubscriptionError, parse_subscription};
 
 const LIST: &str = "vless://12345678-1234-4234-8234-123456789abc@proxy.example:443?security=tls&sni=www.example.com#Imported\ntrojan://secret@proxy.example:443#Not%20supported";
 
+#[test]
+fn installed_package_notice_never_overwrites_errors_or_dispatches_vpn_control() {
+    let (mut app, _) = App::init(Core::default(), Flags::default());
+    app.package_update.changed = true;
+    app.status = "Existing action failure".into();
+    app.notice = Some(Notice::Error);
+    let _ = app.update(Message::Tick);
+    assert_eq!(app.status, "Existing action failure");
+    assert!(!app.package_update.notified);
+    assert!(!app.operations.busy());
+    let _ = app.update(Message::DismissNotice);
+    let _ = app.update(Message::Tick);
+    assert!(app.package_update.notified);
+    assert!(matches!(app.notice, Some(Notice::Info)));
+    assert!(!app.operations.busy());
+    assert!(app.snapshot.is_none());
+}
+
 // Complete the real read admission path with synthetic data, without polling I/O.
 fn observe_nm(app: &mut App, result: Result<nm_tunnel_client::Snapshot, ClientError>) {
     let _ = app.update(Message::Poll);

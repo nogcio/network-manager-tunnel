@@ -42,7 +42,17 @@ manager or always-on daemon, and is not enabled by package installation.
 
 ## Update, remove and recover
 
-Close the app and disconnect this VPN before replacing or removing its executables.
+For compatible upgrades from a version implementing
+[ADR 0030](decisions/0030-session-preserving-package-updates.md), install the rebuilt
+package normally: registration updates automatically, while an active session
+continues on its existing image. After confirmed session teardown the old backend
+retires; a later NM connection uses the installed image. The frontend reports a
+replacement without forced restart: close/reopen it when convenient to use new UI.
+No manual daemon reload, D-Bus reload or VPN reactivation command is required.
+
+The first upgrade from an older version still needs one owner-authorized disconnect
+and confirmed retirement: old running code cannot acquire the new retirement logic.
+Close the app and disconnect before removal or an incompatible migration.
 Use normal AUR rebuilds for updates and `sudo pacman -R network-manager-tunnel-git`
 for removal. Existing NM profiles and the worker account are preserved; manage
 unwanted profiles through NM. No installer owns a second profile database.

@@ -161,6 +161,7 @@ pub(crate) async fn run() -> io::Result<()> {
         std::io::stderr().as_fd().try_clone_to_owned()?.into();
     std_stream.set_nonblocking(true)?;
     let mut stream = UnixStream::from_std(std_stream)?;
+    let file: std::fs::File = wire::receive_tun(&stream).await?.into();
     let config = timeout(Duration::from_secs(5), wire::receive_config(&mut stream))
         .await
         .map_err(|_| io::Error::other("Worker configuration timeout."))??;
@@ -177,7 +178,6 @@ pub(crate) async fn run() -> io::Result<()> {
         .await
         .map_err(|_| io::Error::other("Proxy readiness timeout."))??;
     STAGE.store(3, Ordering::SeqCst);
-    let file: std::fs::File = std::io::stdin().as_fd().try_clone_to_owned()?.into();
     let tun = Arc::new(Tun(Async::new(file)?));
     let health = crate::health::monitor(
         || probe(&profile, &broker, endpoint),

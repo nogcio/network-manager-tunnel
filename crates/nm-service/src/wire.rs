@@ -164,6 +164,61 @@ pub(crate) async fn send_socket(
     }
 }
 
+/// First private bootstrap frame: exactly one TUN fd, before configuration.
+/// EOF, wrong/truncated ancillary data and non-TUN descriptors reject and close
+/// received ownership. Cancellation discards the worker/channel; never retry.
+pub(crate) async fn receive_tun(stream: &UnixStream) -> io::Result<OwnedFd> {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            stream.readable().await?;
+            let result = stream.try_io(Interest::READABLE, || {
+                let mut byte = [0];
+                let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(2))];
+                let mut ancillary = RecvAncillaryBuffer::new(&mut space);
+                let message = rustix::net::recvmsg(
+                    stream,
+                    &mut [IoSliceMut::new(&mut byte)],
+                    &mut ancillary,
+                    RecvFlags::CMSG_CLOEXEC,
+                )?;
+                let mut fds = Vec::new();
+                for item in ancillary.drain() {
+                    if let RecvAncillaryMessage::ScmRights(rights) = item {
+                        fds.extend(rights);
+                    }
+                }
+                if message.bytes != 1
+                    || byte != *b"F"
+                    || fds.len() != 1
+                    || message.flags.intersects(
+                        rustix::net::ReturnFlags::TRUNC | rustix::net::ReturnFlags::CTRUNC,
+                    )
+                {
+                    return Err(io::Error::other("Invalid worker TUN grant."));
+                }
+                let fd = fds
+                    .pop()
+                    .ok_or_else(|| io::Error::other("Missing worker TUN grant."))?;
+                let stat = rustix::fs::fstat(&fd)?;
+                if rustix::fs::FileType::from_raw_mode(stat.st_mode)
+                    != rustix::fs::FileType::CharacterDevice
+                    || rustix::fs::major(stat.st_rdev) != 10
+                    || rustix::fs::minor(stat.st_rdev) != 200
+                {
+                    return Err(io::Error::other("Invalid worker TUN descriptor."));
+                }
+                Ok(fd)
+            });
+            match result {
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                other => return other,
+            }
+        }
+    })
+    .await
+    .map_err(|_| io::Error::other("Worker TUN grant deadline."))?
+}
+
 pub(crate) struct Broker {
     stream: Mutex<UnixStream>,
     pub poisoned: Arc<AtomicBool>,

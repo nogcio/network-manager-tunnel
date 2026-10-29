@@ -70,6 +70,14 @@ Arch's existing sysusers and D-Bus transaction hooks handle installed metadata.
 There is no package-specific install script, NM reload, automatic VPN activation,
 service restart, guard removal or account/profile deletion.
 
+Compatible upgrades use the session-preserving runtime contract in
+[ADR 0030](../../docs/decisions/0030-session-preserving-package-updates.md): active
+processes remain on their running image; only confirmed idle backends retire after
+file replacement. Workers execute the parent's opened image, not a replaceable
+pathname. No custom pacman hook disconnects/reconnects a VPN or restarts its leased
+recovery helper. The first transition from older runtime versions and incompatible
+migrations still require confirmed disconnection. Removal is not a live upgrade.
+
 ## Notice tool and verification limits
 
 Selected tool: `EmbarkStudios/cargo-about` 0.8.4, MIT OR Apache-2.0, released

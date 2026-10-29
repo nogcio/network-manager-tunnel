@@ -9,6 +9,15 @@ and a recovery plan.
 
 ## Ownership and lifecycle
 
+Compatible package replacement never restarts an active session. `executable.rs`
+observes image identity for idle retirement and opens the running backend image for
+worker exec through setpriv's inherited read-only stdin (`/proc/self/fd/0`). TUN is
+then a bounded first SCM_RIGHTS grant on the existing control channel, not stdin;
+no mixed parent/worker image or legacy bootstrap fallback is allowed. Recovery ABI
+v1 is checked before Arm. Only confirmed idle/cleaned lifetimes retire; preparation,
+active flow processing and unconfirmed teardown keep their existing ownership.
+See [ADR 0030](../../docs/decisions/0030-session-preserving-package-updates.md).
+
 Code ownership is explicit: `plugin.rs` is the NM adapter, `lifecycle.rs` owns
 ordered operation admission, and `supervisor/` separates pure planning, resource
 setup and broker authorization. The [shared data plane](../dataplane/README.md)

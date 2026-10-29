@@ -376,3 +376,38 @@ async fn oversized_config_is_rejected_before_allocating_its_body() -> io::Result
     assert!(receive_config(&mut receiver).await.is_err());
     Ok(())
 }
+#[tokio::test]
+async fn worker_bootstrap_refuses_non_tun_descriptors_and_releases_received_ownership()
+-> io::Result<()> {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let (parent, child) = UnixStream::pair()?;
+        let (fd, peer) = std::os::unix::net::UnixStream::pair()?;
+        peer.set_nonblocking(true)?;
+        let mut peer = UnixStream::from_std(peer)?;
+        send_socket(&parent, &fd).await?;
+        drop(fd);
+        assert!(receive_tun(&child).await.is_err());
+        assert_eq!(
+            peer.read(&mut [0]).await?,
+            0,
+            "Rejected received descriptor must close"
+        );
+        let (mut parent, child) = UnixStream::pair()?;
+        parent.write_all(b"F").await?;
+        assert!(receive_tun(&child).await.is_err());
+        let (parent, child) = UnixStream::pair()?;
+        let file = std::fs::File::open("/dev/null")?;
+        send_socket(&parent, &file).await?;
+        assert!(receive_tun(&child).await.is_err());
+        Ok(())
+    })
+    .await
+    .map_err(|_| io::Error::other("Worker bootstrap test deadline."))?
+}
+
+#[tokio::test(start_paused = true)]
+async fn worker_bootstrap_has_one_deadline_without_retrying() -> io::Result<()> {
+    let (_parent, child) = UnixStream::pair()?;
+    assert!(receive_tun(&child).await.is_err());
+    Ok(())
+}

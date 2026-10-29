@@ -80,3 +80,18 @@ async fn unconfirmed_preparation_shutdown_is_not_accepted_as_safe_cancellation()
     });
     assert!(cancel_preparation(&mut pending).await.is_err());
 }
+#[test]
+fn generation_replacement_retires_only_confirmed_idle_lifetimes() {
+    for state in 1..=6 {
+        for pending in [false, true] {
+            for session in [false, true] {
+                for cleanup in [false, true] {
+                    assert_eq!(
+                        super::idle_generation_boundary(state, pending, session, cleanup),
+                        matches!(state, 1 | 6) && !pending && !session && !cleanup
+                    );
+                }
+            }
+        }
+    }
+}

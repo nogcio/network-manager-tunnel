@@ -1,5 +1,6 @@
 //! NetworkManager Tunnel VPN plugin and unprivileged packet worker.
 mod dns;
+mod executable;
 mod fakeip;
 mod fakeip_boot;
 mod guard_recovery;

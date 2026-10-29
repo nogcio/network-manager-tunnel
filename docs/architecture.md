@@ -199,6 +199,7 @@ Within `crates/nm-service/src/`:
 | --- | --- |
 | `plugin.rs` | NM caller authorization, request admission validation and NM signal encoding |
 | `lifecycle.rs` | Ordered operation admission and preparation/session ownership |
+| `executable.rs` | Same-image worker executable capability and idle upgrade retirement observation |
 | `supervisor/plan.rs` | Pure network plan from a checked profile and bounded uplink observation |
 | `supervisor/session.rs` | Uplink discovery, privileged resource setup and ordered stop |
 | `supervisor/resources.rs` | External preparation/session resource owner and confirmed shutdown barrier |

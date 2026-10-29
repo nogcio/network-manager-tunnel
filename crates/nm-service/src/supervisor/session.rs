@@ -243,6 +243,7 @@ pub(crate) async fn prepare(
     eprintln!("Activation stage: endpoint resolved.");
     let device = resources.device.as_ref().ok_or_else(failure)?;
     let tun_file: std::fs::File = device.as_fd().try_clone_to_owned()?.into();
+    let worker_image = crate::executable::worker_image()?;
     let (parent, child) = std::os::unix::net::UnixStream::pair()?;
     parent.set_nonblocking(true)?;
     let control: std::os::fd::OwnedFd = child.into();
@@ -267,11 +268,11 @@ pub(crate) async fn prepare(
                 "KILL",
                 "--",
             ])
-            .arg(std::env::current_exe()?)
+            .arg(crate::executable::WORKER_IMAGE)
             .arg("--worker")
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
-            .stdin(Stdio::from(tun_file))
+            .stdin(Stdio::from(worker_image))
             .stdout(Stdio::from(worker_statistics))
             .stderr(Stdio::from(control))
             .kill_on_drop(true)
@@ -288,6 +289,13 @@ pub(crate) async fn prepare(
         receiver.receive(statistics).await
     })));
     let mut stream = UnixStream::from_std(parent)?;
+    timeout(
+        Duration::from_secs(5),
+        wire::send_socket(&stream, &tun_file),
+    )
+    .await
+    .map_err(|_| io::Error::other("Worker TUN grant timeout."))??;
+    drop(tun_file);
     wire::send_config(&mut stream, &config).await?;
     let endpoint = config.endpoint;
     drop(config);

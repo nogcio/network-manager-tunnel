@@ -39,6 +39,7 @@ All project documentation is maintained in English.
 - [ADR 0027: COSMIC profile editing and session source management](decisions/0027-cosmic-profile-and-source-management.md)
 - [ADR 0028: subscription URLs in Secret Service](decisions/0028-subscription-url-secret-service.md)
 - [ADR 0029: shared data plane and platform capabilities](decisions/0029-shared-dataplane.md)
+- [ADR 0030: session-preserving package updates](decisions/0030-session-preserving-package-updates.md)
 - [COSMIC subscription UI](../frontends/cosmic/README.md)
 - [Experimental end-user workflow](user-guide.md)
 - [Arch installation and AUR direction](installation.md)

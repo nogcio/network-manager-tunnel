@@ -46,6 +46,10 @@ fn admit_start(state: &AtomicU32, pending: bool, session: bool) -> Result<(), &'
     Ok(())
 }
 
+fn idle_generation_boundary(state: u32, pending: bool, session: bool, cleanup: bool) -> bool {
+    matches!(state, 1 | 6) && !pending && !session && !cleanup
+}
+
 async fn cancel_preparation(pending: &mut Option<Preparation>) -> zbus::Result<()> {
     if let Some(mut task) = pending.take() {
         let _ = task.cancel.send(());
@@ -96,6 +100,8 @@ pub(crate) async fn run(
     mut requests: mpsc::Receiver<Request>,
     telemetry: Telemetry,
 ) -> zbus::Result<()> {
+    let image = crate::executable::Image::capture()
+        .map_err(|_| zbus::Error::Failure("Executable generation unavailable.".into()))?;
     let mut pending = None;
     let mut session: Option<Session> = None;
     let mut cleanup = None;
@@ -130,6 +136,15 @@ pub(crate) async fn run(
         };
         match event {
             Event::Heartbeat => {
+                if idle_generation_boundary(
+                    state.load(Ordering::SeqCst),
+                    pending.is_some(),
+                    session.is_some(),
+                    cleanup.is_some(),
+                ) && image.replaced()
+                {
+                    return Ok(());
+                }
                 // Keep the admitted backend leased even after cleanup, while it
                 // remains alive awaiting NM. Idle is not a hung lifecycle loop.
                 if state.load(Ordering::SeqCst) != 1 {
@@ -145,6 +160,16 @@ pub(crate) async fn run(
             Event::Request(Some(Request::Start(config, reply))) => {
                 if reply.is_closed() {
                     continue;
+                }
+                if idle_generation_boundary(
+                    state.load(Ordering::SeqCst),
+                    pending.is_some(),
+                    session.is_some(),
+                    cleanup.is_some(),
+                ) && image.replaced()
+                {
+                    let _ = reply.send(Err("Backend updated; retry through NetworkManager."));
+                    return Ok(());
                 }
                 if let Err(error) = admit_start(
                     &state,
@@ -243,6 +268,9 @@ pub(crate) async fn run(
                 cleanup = None;
                 plugin::change(&bus, &state, 6).await?;
                 telemetry.state(if failed { "failed" } else { "stopped" });
+                if image.replaced() {
+                    return Ok(());
+                }
             }
             Event::Shutdown | Event::Request(None) => {
                 telemetry.state("stopping");

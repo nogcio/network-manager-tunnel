@@ -297,3 +297,4 @@ source-change-credential = Authentication credential changed
 source-change-policy = DNS, routing or protection policy changed
 source-change-none = Same source configuration; display names are not server identity
 source-change-scope = Compared with the previous source entry, not the current NM profile. Compatible local overrides are preserved; conflicts reject. Changes take effect only on a later connection.
+package-update-installed = A Tunnel update is installed. Close and reopen this window to use it. Your active VPN is not restarted; the new backend is used on the next connection.

@@ -7,6 +7,9 @@ use zbus::message::Header;
 const NAME: &str = "org.freedesktop.NetworkManager.tunnel.Recovery";
 const PATH: &str = "/org/freedesktop/NetworkManager/tunnel/Recovery";
 const INTERFACE: &str = "org.freedesktop.NetworkManager.tunnel.Recovery";
+// Stable recovery ABI across compatible package updates; breaking semantics need
+// a new version/interface, never an in-place reinterpretation of Arm/Renew.
+const PROTOCOL: u32 = 1;
 
 mod watchdog;
 
@@ -76,7 +79,7 @@ impl Recovery {
 
     /// Non-activating clients observe only versioned status, never process identity.
     fn get_status(&self) -> (u32, String) {
-        (1, self.status.name().into())
+        (PROTOCOL, self.status.name().into())
     }
 }
 
@@ -151,6 +154,13 @@ pub(crate) async fn arm(bus: &zbus::Connection) -> io::Result<()> {
         let proxy = zbus::Proxy::new(bus, NAME, PATH, INTERFACE)
             .await
             .map_err(|_| unavailable())?;
+        let (version, _): (u32, String) = proxy
+            .call("GetStatus", &())
+            .await
+            .map_err(|_| unavailable())?;
+        if version != PROTOCOL {
+            return Err(unavailable());
+        }
         proxy
             .call::<_, _, ()>("Arm", &())
             .await

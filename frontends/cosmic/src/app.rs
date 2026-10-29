@@ -38,6 +38,9 @@ mod reads;
 #[path = "recovery.rs"]
 mod recovery;
 
+#[path = "package_update.rs"]
+mod package_update;
+
 #[path = "download.rs"]
 mod download;
 
@@ -117,6 +120,7 @@ pub(crate) struct App {
     traffic: traffic::Traffic,
     recovery: recovery::Recovery,
     ticks: u8,
+    package_update: package_update::Update,
     #[cfg(all(feature = "preview", debug_assertions))]
     preview: Option<preview::Preview>,
 }
@@ -167,6 +171,7 @@ pub(crate) enum Message {
     ShowDetails(Option<String>),
     CloseDetails,
     Tick,
+    PackageObserved(bool),
     UsageObserved(
         reads::Ticket,
         Result<Option<nm_tunnel_client::UsageSnapshot>, nm_tunnel_client::UsageError>,
@@ -246,6 +251,7 @@ impl cosmic::Application for App {
             traffic: traffic::Traffic::default(),
             recovery: recovery::Recovery::default(),
             ticks: 0,
+            package_update: package_update::Update::installed(),
             #[cfg(all(feature = "preview", debug_assertions))]
             preview: None,
         };
@@ -307,6 +313,7 @@ impl cosmic::Application for App {
                     | Message::ShowDetails(_)
                     | Message::CloseDetails
                     | Message::Tick
+                    | Message::PackageObserved(_)
                     | Message::UsageObserved(_, _)
                     | Message::RecoveryObserved(_, _)
             )
@@ -356,6 +363,24 @@ impl cosmic::Application for App {
                 return self.update(Message::Prepare);
             }
             Message::Tick => {
+                let package = self
+                    .package_update
+                    .begin()
+                    .map_or_else(Task::none, |running| {
+                        cosmic::task::future(async move {
+                            Message::PackageObserved(package_update::replaced(running).await)
+                        })
+                    });
+                if self.package_update.changed
+                    && !self.package_update.notified
+                    && self.notice.is_none()
+                    && !self.operations.busy()
+                    && self.download.pending().is_none()
+                {
+                    self.package_update.notified = true;
+                    self.status = fl!("package-update-installed");
+                    self.notice = Some(Notice::Info);
+                }
                 let deletion = self.deletion_observed();
                 self.ticks = (self.ticks + 1) % 3;
                 let usage = self.poll_usage();
@@ -365,8 +390,9 @@ impl cosmic::Application for App {
                     Task::none()
                 };
                 let recovery = self.poll_recovery();
-                return Task::batch([usage, nm, recovery, deletion]);
+                return Task::batch([usage, nm, recovery, deletion, package]);
             }
+            Message::PackageObserved(changed) => self.package_update.finish(changed),
             Message::UsageObserved(ticket, result) => {
                 if self.reads.finish_usage(ticket) {
                     self.traffic.observe(result);
